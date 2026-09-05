@@ -1,0 +1,34 @@
+import { Router } from "express";
+import { profilesRouter } from "./profiles.js";
+import { contactsRouter } from "./contacts.js";
+import { conversationsRouter } from "./conversations.js";
+import { messagesRouter } from "./messages.js";
+import { mediaRouter } from "./media.js";
+import { groupsRouter } from "./groups.js";
+import { momentsRouter } from "./moments.js";
+import { callsRouter } from "./calls.js";
+import { premiumRouter } from "./premium.js";
+import { miscRouter } from "./misc.js";
+import { channelsRouter } from "./channels.js";
+import { securityRouter } from "./security.js";
+import { agentRouter } from "./agent.js";
+import { aiRouter } from "./ai.js";
+import { supportRouter } from "./support.js";
+
+export const apiRouter = Router();
+
+apiRouter.use(profilesRouter);
+apiRouter.use(contactsRouter);
+apiRouter.use(conversationsRouter);
+apiRouter.use(messagesRouter);
+apiRouter.use(mediaRouter);
+apiRouter.use(groupsRouter);
+apiRouter.use(momentsRouter);
+apiRouter.use(callsRouter);
+apiRouter.use(premiumRouter);
+apiRouter.use(miscRouter);
+apiRouter.use(channelsRouter);
+apiRouter.use(securityRouter);
+apiRouter.use(agentRouter);
+apiRouter.use(aiRouter);
+apiRouter.use(supportRouter);

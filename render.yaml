@@ -1,0 +1,71 @@
+services:
+  - type: web
+    name: chatapp-backend
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite
+      - key: OPENROUTER_MODEL_FREE
+        value: meta-llama/llama-3.1-8b-instruct
+      - key: OPENROUTER_MODEL_PREMIUM
+        sync: false
+      - key: OPENROUTER_MODEL_PRO
+        sync: false
+      - key: TURN_SECRET
+        sync: false
+      - key: TURN_PUBLIC_HOST
+        sync: false
+      - key: TURN_PORT
+        value: "3478"
+      - key: TURN_URLS
+        sync: false
+      - key: XIRSYS_IDENT
+        sync: false
+      - key: XIRSYS_SECRET
+        sync: false
+      - key: XIRSYS_CHANNEL
+        sync: false
+
+  # retention-sweep.ts existed in code but was never actually scheduled
+  # anywhere — org message-retention policies were silently doing nothing.
+  # Runs once daily at 03:00 UTC; adjust the schedule as you like.
+  # NOTE: unlike the free web service above, Render bills cron jobs
+  # separately (metered by runtime, ~$1/month minimum) — there's no free
+  # tier for this service type as of 2026.
+  - type: cron
+    name: chatapp-backend-retention-sweep
+    runtime: node
+    plan: starter
+    region: oregon
+    schedule: "0 3 * * *"
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run retention-sweep
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
