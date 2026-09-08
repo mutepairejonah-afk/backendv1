@@ -47,7 +47,8 @@ mediaRouter.post("/upload-chat-media", requireAuth, (req, res) => rp(res, async 
   const isImage = data.contentType.startsWith("image/");
   const isAudio = data.contentType.startsWith("audio/");
 
-  const { data: message, error: msgError } = await supabaseAdmin.from("messages").insert({ conversation_id: data.conversationId, sender_clerk_id: data.clerkUserId, text: null, image_url: isImage ? urlData.publicUrl : null, video_url: isVideo ? urlData.publicUrl : null, audio_url: isAudio ? urlData.publicUrl : null, expires_at: expiresAt }).select().single();
+  const mediaType = isVideo ? "video" : isAudio ? "audio" : "image";
+  const { data: message, error: msgError } = await supabaseAdmin.from("messages").insert({ conversation_id: data.conversationId, sender_clerk_id: data.clerkUserId, text: null, image_url: isImage ? urlData.publicUrl : null, video_url: isVideo ? urlData.publicUrl : null, audio_url: isAudio ? urlData.publicUrl : null, file_name: data.fileName, file_size: buffer.length, mime_type: data.contentType, media_type: mediaType, expires_at: expiresAt }).select().single();
   if (msgError) throw new Error(`Failed to save message: ${msgError.message}`);
 
   await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", data.conversationId);
@@ -99,4 +100,18 @@ mediaRouter.post("/upload-moment-image", requireAuth, (req, res) => rp(res, asyn
   if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
   const { data: urlData } = supabaseAdmin.storage.from("moment-images").getPublicUrl(storagePath);
   return { publicUrl: urlData.publicUrl };
+}));
+
+// Upload and create a 24-hour video status in one authenticated operation.
+mediaRouter.post("/upload-video-status", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), fileName: z.string().min(1).max(255), fileBase64: z.string().min(1), contentType: z.string().regex(/^video\//).max(100), text: z.string().max(5000).optional(), thumbnailUrl: z.string().url().max(2048).optional(), durationSeconds: z.number().int().min(0).max(86400).optional() }).parse(req.body);
+  const buffer = decodeUpload(data.fileBase64, data.contentType, 100 * 1024 * 1024, /^video\//);
+  const ext = data.fileName.split(".").pop() || "mp4";
+  const storagePath = `${data.clerkUserId}/videos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error: uploadError } = await supabaseAdmin.storage.from("moment-media").upload(storagePath, buffer, { contentType: data.contentType, upsert: false });
+  if (uploadError) throw new Error(`Video status upload failed: ${uploadError.message}`);
+  const { data: urlData } = supabaseAdmin.storage.from("moment-media").getPublicUrl(storagePath);
+  const { data: moment, error } = await supabaseAdmin.from("moments").insert({ clerk_user_id: data.clerkUserId, text: data.text || null, video_url: urlData.publicUrl, thumbnail_url: data.thumbnailUrl || null, mime_type: data.contentType, duration_seconds: data.durationSeconds ?? null, expires_at: new Date(Date.now() + 24 * 3600000).toISOString() }).select().single();
+  if (error) throw new Error(`Failed to save video status: ${error.message}`);
+  return moment;
 }));

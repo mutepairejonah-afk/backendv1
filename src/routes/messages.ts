@@ -52,11 +52,13 @@ messagesRouter.post("/get-messages", requireAuth, (req, res) => rp(res, async ()
 }));
 
 messagesRouter.post("/send-message", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), conversationId: z.string().uuid(), text: z.string().min(1).max(5000).optional(), imageUrl: z.string().url().max(2048).optional(), replyToMessageId: z.string().uuid().optional() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), conversationId: z.string().uuid(), text: z.string().max(5000).optional(), imageUrl: z.string().url().max(2048).optional(), videoUrl: z.string().url().max(2048).optional(), audioUrl: z.string().url().max(2048).optional(), fileUrl: z.string().url().max(2048).optional(), fileName: z.string().max(255).optional(), fileSize: z.number().int().nonnegative().max(500_000_000).optional(), mimeType: z.string().max(120).optional(), thumbnailUrl: z.string().url().max(2048).optional(), durationSeconds: z.number().int().min(0).max(86400).optional(), replyToMessageId: z.string().uuid().optional() }).parse(req.body);
+  if (!data.text?.trim() && !data.imageUrl && !data.videoUrl && !data.audioUrl && !data.fileUrl) throw new Error("A message needs text or media");
   await assertCanPostInConversation(data.clerkUserId, data.conversationId);
   const { data: convPerm } = await supabaseAdmin.from("conversations").select("type, only_admins_send, disappearing_seconds").eq("id", data.conversationId).single();
   const expiresAt = convPerm?.disappearing_seconds ? new Date(Date.now() + convPerm.disappearing_seconds * 1000).toISOString() : null;
-  const { data: message, error } = await supabaseAdmin.from("messages").insert({ conversation_id: data.conversationId, sender_clerk_id: data.clerkUserId, text: data.text || null, image_url: data.imageUrl || null, reply_to_message_id: data.replyToMessageId || null, expires_at: expiresAt }).select().single();
+  const mediaType = data.videoUrl ? "video" : data.audioUrl ? "audio" : data.imageUrl ? "image" : data.fileUrl ? "file" : null;
+  const { data: message, error } = await supabaseAdmin.from("messages").insert({ conversation_id: data.conversationId, sender_clerk_id: data.clerkUserId, text: data.text || null, image_url: data.imageUrl || null, video_url: data.videoUrl || null, audio_url: data.audioUrl || null, file_url: data.fileUrl || null, file_name: data.fileName || null, file_size: data.fileSize || null, mime_type: data.mimeType || null, media_type: mediaType, thumbnail_url: data.thumbnailUrl || null, duration_seconds: data.durationSeconds ?? null, reply_to_message_id: data.replyToMessageId || null, expires_at: expiresAt }).select().single();
   if (error) throw new Error(`Failed to send message: ${error.message}`);
   await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", data.conversationId);
   const { data: members } = await supabaseAdmin.from("conversation_members").select("id, unread_count").eq("conversation_id", data.conversationId).neq("clerk_user_id", data.clerkUserId);

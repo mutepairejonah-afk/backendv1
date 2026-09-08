@@ -61,7 +61,7 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
 
 // ── Update channel settings (broadcast mode, discoverability, topic) ────────
 channelsRouter.post("/update-channel-settings", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), topic: z.string().max(500).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), topic: z.string().max(500).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), slowModeSeconds: z.number().int().min(0).max(86400).optional(), inviteExpiresAt: z.string().datetime().nullable().optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
   if (!channel) throw new Error("Channel not found");
   await assertChannelAdmin(data.clerkUserId, data.channelId);
@@ -69,6 +69,9 @@ channelsRouter.post("/update-channel-settings", requireAuth, (req, res) => rp(re
   if (data.topic !== undefined) patch.topic = data.topic;
   if (data.isBroadcast !== undefined) patch.is_broadcast = data.isBroadcast;
   if (data.isDiscoverable !== undefined) patch.is_discoverable = data.isDiscoverable;
+  if (data.slowModeSeconds !== undefined) patch.slow_mode_seconds = data.slowModeSeconds;
+  if (data.inviteExpiresAt !== undefined) patch.invite_expires_at = data.inviteExpiresAt;
+  if (data.settings !== undefined) patch.settings = data.settings;
   const { data: updated, error } = await supabaseAdmin.from("channels").update(patch).eq("id", data.channelId).select().single();
   if (error) throw new Error(`Failed to update channel: ${error.message}`);
   return updated;
@@ -90,8 +93,9 @@ channelsRouter.post("/regenerate-channel-invite", requireAuth, (req, res) => rp(
 //    a t.me/joinchat/XXXX link before you've joined) ─────────────────────────
 channelsRouter.post("/preview-channel-by-invite", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), inviteCode: z.string().min(1).max(64) }).parse(req.body);
-  const { data: channel } = await supabaseAdmin.from("channels").select("id, name, topic, is_private, is_broadcast, member_count").eq("invite_code", data.inviteCode).is("archived_at", null).maybeSingle();
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, name, topic, is_private, is_broadcast, member_count, invite_expires_at").eq("invite_code", data.inviteCode).is("archived_at", null).maybeSingle();
   if (!channel) throw new Error("This invite link is invalid or has expired");
+  if (channel.invite_expires_at && new Date(channel.invite_expires_at) <= new Date()) throw new Error("This invite link has expired");
   const { data: existingMembership } = await supabaseAdmin.from("channel_members").select("role").eq("channel_id", channel.id).eq("clerk_user_id", data.clerkUserId).maybeSingle();
   return { ...channel, alreadyMember: !!existingMembership };
 }));
@@ -101,6 +105,7 @@ channelsRouter.post("/join-channel-by-invite", requireAuth, (req, res) => rp(res
   const data = z.object({ clerkUserId: z.string().min(1).max(255), inviteCode: z.string().min(1).max(64) }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("invite_code", data.inviteCode).is("archived_at", null).maybeSingle();
   if (!channel) throw new Error("This invite link is invalid or has expired");
+  if (channel.invite_expires_at && new Date(channel.invite_expires_at) <= new Date()) throw new Error("This invite link has expired");
   await grantChannelReadAccess(data.clerkUserId, channel, "member");
   return channel;
 }));
@@ -160,6 +165,35 @@ channelsRouter.post("/archive-channel", requireAuth, (req, res) => rp(res, async
   const { error } = await supabaseAdmin.from("channels").update({ archived_at: new Date().toISOString() }).eq("id", data.channelId);
   if (error) throw new Error(`Failed to archive channel: ${error.message}`);
   return { success: true };
+}));
+
+channelsRouter.post("/restore-channel", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
+  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  const { error } = await supabaseAdmin.from("channels").update({ archived_at: null }).eq("id", data.channelId);
+  if (error) throw new Error(`Failed to restore channel: ${error.message}`);
+  return { success: true };
+}));
+
+channelsRouter.post("/set-channel-mute", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), muted: z.boolean() }).parse(req.body);
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { error } = await supabaseAdmin.from("channel_members").update({ muted: data.muted }).eq("channel_id", data.channelId).eq("clerk_user_id", data.clerkUserId);
+  if (error) throw new Error(`Failed to update channel mute: ${error.message}`);
+  return { success: true, muted: data.muted };
+}));
+
+channelsRouter.post("/send-channel-post", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), text: z.string().max(5000).optional(), imageUrl: z.string().url().max(2048).optional(), videoUrl: z.string().url().max(2048).optional(), audioUrl: z.string().url().max(2048).optional(), fileUrl: z.string().url().max(2048).optional(), fileName: z.string().max(255).optional(), mimeType: z.string().max(120).optional(), thumbnailUrl: z.string().url().max(2048).optional(), durationSeconds: z.number().int().min(0).max(86400).optional() }).parse(req.body);
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id, archived_at").eq("id", data.channelId).maybeSingle();
+  if (!channel || !channel.conversation_id || channel.archived_at) throw new Error("Channel is unavailable");
+  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  if (!data.text?.trim() && !data.imageUrl && !data.videoUrl && !data.audioUrl && !data.fileUrl) throw new Error("A channel post needs text or media");
+  const mediaType = data.videoUrl ? "video" : data.audioUrl ? "audio" : data.imageUrl ? "image" : data.fileUrl ? "file" : null;
+  const { data: message, error } = await supabaseAdmin.from("messages").insert({ conversation_id: channel.conversation_id, sender_clerk_id: data.clerkUserId, text: data.text || null, image_url: data.imageUrl || null, video_url: data.videoUrl || null, audio_url: data.audioUrl || null, file_url: data.fileUrl || null, file_name: data.fileName || null, mime_type: data.mimeType || null, media_type: mediaType, thumbnail_url: data.thumbnailUrl || null, duration_seconds: data.durationSeconds ?? null }).select().single();
+  if (error) throw new Error(`Failed to publish channel post: ${error.message}`);
+  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", channel.conversation_id);
+  return message;
 }));
 
 // ── Channel info + members list ──────────────────────────────────────────────

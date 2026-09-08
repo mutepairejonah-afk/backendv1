@@ -31,9 +31,9 @@ momentsRouter.post("/get-moments", requireAuth, (req, res) => rp(res, async () =
 }));
 
 momentsRouter.post("/create-moment", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), text: z.string().max(5000).optional(), imageUrl: z.string().url().max(2048).optional() }).parse(req.body);
-  if (!data.text?.trim() && !data.imageUrl) throw new Error("A moment must have text or an image/video.");
-  const { data: moment, error } = await supabaseAdmin.from("moments").insert({ clerk_user_id: data.clerkUserId, text: data.text || null, image_url: data.imageUrl || null }).select().single();
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), text: z.string().max(5000).optional(), imageUrl: z.string().url().max(2048).optional(), videoUrl: z.string().url().max(2048).optional(), audioUrl: z.string().url().max(2048).optional(), thumbnailUrl: z.string().url().max(2048).optional(), mimeType: z.string().max(120).optional(), durationSeconds: z.number().int().min(0).max(86400).optional(), expiresInHours: z.number().int().min(1).max(168).optional() }).parse(req.body);
+  if (!data.text?.trim() && !data.imageUrl && !data.videoUrl && !data.audioUrl) throw new Error("A moment must have text, an image, video, or audio.");
+  const { data: moment, error } = await supabaseAdmin.from("moments").insert({ clerk_user_id: data.clerkUserId, text: data.text || null, image_url: data.imageUrl || null, video_url: data.videoUrl || null, audio_url: data.audioUrl || null, thumbnail_url: data.thumbnailUrl || null, mime_type: data.mimeType || null, duration_seconds: data.durationSeconds ?? null, expires_at: new Date(Date.now() + (data.expiresInHours ?? 24) * 3600000).toISOString() }).select().single();
   if (error) throw new Error(`Failed to create moment: ${error.message}`);
   return moment;
 }));
