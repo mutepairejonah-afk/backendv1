@@ -115,3 +115,15 @@ mediaRouter.post("/upload-video-status", requireAuth, (req, res) => rp(res, asyn
   if (error) throw new Error(`Failed to save video status: ${error.message}`);
   return moment;
 }));
+
+
+mediaRouter.post("/upload-story-media", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), fileName: z.string().min(1).max(255), fileBase64: z.string().min(1), contentType: z.string().regex(/^(image|video|audio)\//).max(100) }).parse(req.body);
+  const buffer = decodeUpload(data.fileBase64, data.contentType, data.contentType.startsWith("video/") ? 100 * 1024 * 1024 : 15 * 1024 * 1024, /^(image|video|audio)\//);
+  const ext = data.fileName.split(".").pop() || "bin";
+  const storagePath = `${data.clerkUserId}/stories/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabaseAdmin.storage.from("moment-media").upload(storagePath, buffer, { contentType: data.contentType, upsert: false });
+  if (error) throw new Error(`Story media upload failed: ${error.message}`);
+  const { data: urlData } = supabaseAdmin.storage.from("moment-media").getPublicUrl(storagePath);
+  return { publicUrl: urlData.publicUrl, contentType: data.contentType, fileSize: buffer.length };
+}));

@@ -42,3 +42,23 @@ storiesRouter.post("/delete-story", requireAuth, (req, res) => reply(res, async 
   if (error) throw new Error(`Failed to delete story: ${error.message}`);
   return { success: true };
 }));
+
+
+storiesRouter.post("/get-story-view-counts", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), storyIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
+  const { data: owned } = await supabaseAdmin.from("stories").select("id").in("id", data.storyIds).eq("clerk_user_id", data.clerkUserId);
+  const ownedIds = (owned || []).map((s: any) => s.id);
+  if (!ownedIds.length) return {};
+  const { data: views } = await supabaseAdmin.from("story_views").select("story_id").in("story_id", ownedIds);
+  return ownedIds.reduce((out: Record<string, number>, id: string) => { out[id] = (views || []).filter((v: any) => v.story_id === id).length; return out; }, {});
+}));
+
+storiesRouter.post("/get-story-viewers", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), storyId: z.string().uuid() }).parse(req.body);
+  const { data: story } = await supabaseAdmin.from("stories").select("id").eq("id", data.storyId).eq("clerk_user_id", data.clerkUserId).maybeSingle();
+  if (!story) throw new Error("Only the story owner can view its viewers");
+  const { data: views } = await supabaseAdmin.from("story_views").select("clerk_user_id, viewed_at").eq("story_id", data.storyId).order("viewed_at", { ascending: false });
+  const ids = [...new Set((views || []).map((v: any) => v.clerk_user_id))];
+  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url").in("clerk_user_id", ids.length ? ids : ["__none__"]);
+  return { viewers: (views || []).map((v: any) => ({ ...v, profile: (profiles || []).find((p: any) => p.clerk_user_id === v.clerk_user_id) || null })), count: views?.length || 0 };
+}));
