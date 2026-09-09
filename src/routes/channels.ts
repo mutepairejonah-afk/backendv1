@@ -39,7 +39,7 @@ async function grantChannelReadAccess(clerkUserId: string, channel: { id: string
 // Telegram-style: any authenticated user can create a channel. The creator
 // becomes its first admin. No workspace/organization is involved.
 channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), name: z.string().min(1).max(80), topic: z.string().max(500).optional(), isPrivate: z.boolean().optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), memberClerkIds: z.array(z.string()).max(1000).optional() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), name: z.string().min(1).max(80), topic: z.string().max(500).optional(), isPrivate: z.boolean().optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), memberClerkIds: z.array(z.string()).max(1000).optional(), username: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/).optional(), description: z.string().max(2048).optional() }).parse(req.body);
   const slugName = data.name.toLowerCase().trim().replace(/[^a-z0-9-]+/g, "-").replace(/(^-|-$)/g, "");
   if (!slugName) throw new Error("Invalid channel name");
 
@@ -47,7 +47,7 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
   if (convErr) throw new Error(`Failed to create channel conversation: ${convErr.message}`);
 
   const publicSlug = `${slugName}-${randomBytes(4).toString("hex")}`;
-  const { data: channel, error } = await supabaseAdmin.from("channels").insert({ conversation_id: conv.id, name: slugName, public_slug: publicSlug, topic: data.topic || null, is_private: data.isPrivate || false, is_broadcast: data.isBroadcast || false, is_discoverable: data.isDiscoverable ?? true, created_by: data.clerkUserId }).select().single();
+  const { data: channel, error } = await supabaseAdmin.from("channels").insert({ conversation_id: conv.id, name: slugName, public_slug: publicSlug, topic: data.topic || null, is_private: data.isPrivate || false, is_broadcast: data.isBroadcast || false, is_discoverable: data.isDiscoverable ?? true, username: data.username?.toLowerCase() || null, description: data.description || null, created_by: data.clerkUserId }).select().single();
   if (error) throw new Error(`Failed to create channel: ${error.message}`);
 
   const members = [data.clerkUserId, ...(data.memberClerkIds || []).filter((id) => id !== data.clerkUserId)];
@@ -61,12 +61,18 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
 
 // ── Update channel settings (broadcast mode, discoverability, topic) ────────
 channelsRouter.post("/update-channel-settings", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), topic: z.string().max(500).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), slowModeSeconds: z.number().int().min(0).max(86400).optional(), inviteExpiresAt: z.string().datetime().nullable().optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), topic: z.string().max(500).optional(), username: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/).optional(), description: z.string().max(2048).optional(), commentsEnabled: z.boolean().optional(), signaturesEnabled: z.boolean().optional(), defaultReactions: z.array(z.string().max(12)).max(20).optional(), permissions: z.record(z.boolean()).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), slowModeSeconds: z.number().int().min(0).max(86400).optional(), inviteExpiresAt: z.string().datetime().nullable().optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
   if (!channel) throw new Error("Channel not found");
   await assertChannelAdmin(data.clerkUserId, data.channelId);
   const patch: Record<string, unknown> = {};
   if (data.topic !== undefined) patch.topic = data.topic;
+  if (data.username !== undefined) patch.username = data.username.toLowerCase();
+  if (data.description !== undefined) patch.description = data.description;
+  if (data.commentsEnabled !== undefined) patch.comments_enabled = data.commentsEnabled;
+  if (data.signaturesEnabled !== undefined) patch.signatures_enabled = data.signaturesEnabled;
+  if (data.defaultReactions !== undefined) patch.default_reactions = data.defaultReactions;
+  if (data.permissions !== undefined) patch.permissions = data.permissions;
   if (data.isBroadcast !== undefined) patch.is_broadcast = data.isBroadcast;
   if (data.isDiscoverable !== undefined) patch.is_discoverable = data.isDiscoverable;
   if (data.slowModeSeconds !== undefined) patch.slow_mode_seconds = data.slowModeSeconds;
@@ -197,6 +203,46 @@ channelsRouter.post("/send-channel-post", requireAuth, (req, res) => rp(res, asy
 }));
 
 // ── Channel info + members list ──────────────────────────────────────────────
+channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: admins, error } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId).eq("role", "admin").order("joined_at", { ascending: true });
+  if (error) throw new Error(`Failed to load channel admins: ${error.message}`);
+  return admins || [];
+}));
+
+channelsRouter.post("/set-channel-admin", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255), isAdmin: z.boolean() }).parse(req.body);
+  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  if (data.targetClerkId === data.clerkUserId && !data.isAdmin) throw new Error("The channel must keep an administrator");
+  const { error } = await supabaseAdmin.from("channel_members").update({ role: data.isAdmin ? "admin" : "member" }).eq("channel_id", data.channelId).eq("clerk_user_id", data.targetClerkId);
+  if (error) throw new Error(`Failed to update channel admin: ${error.message}`);
+  return { success: true, isAdmin: data.isAdmin };
+}));
+
+channelsRouter.post("/search-channel-posts", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), query: z.string().trim().min(1).max(120), limit: z.number().int().min(1).max(100).optional() }).parse(req.body);
+  const { data: channel } = await supabaseAdmin.from("channels").select("conversation_id").eq("id", data.channelId).maybeSingle();
+  if (!channel?.conversation_id) throw new Error("Channel not found");
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: posts, error } = await supabaseAdmin.from("messages").select("*").eq("conversation_id", channel.conversation_id).ilike("text", `%${data.query}%`).order("created_at", { ascending: false }).limit(data.limit ?? 50);
+  if (error) throw new Error(`Failed to search channel posts: ${error.message}`);
+  return posts || [];
+}));
+
+channelsRouter.post("/pin-channel-post", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), messageId: z.string().uuid(), pinned: z.boolean().optional() }).parse(req.body);
+  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  const { data: channel } = await supabaseAdmin.from("channels").select("conversation_id").eq("id", data.channelId).maybeSingle();
+  if (!channel?.conversation_id) throw new Error("Channel not found");
+  const { data: message } = await supabaseAdmin.from("messages").select("id").eq("id", data.messageId).eq("conversation_id", channel.conversation_id).maybeSingle();
+  if (!message) throw new Error("Post not found in this channel");
+  const pinned = data.pinned ?? true;
+  const { error } = await supabaseAdmin.from("messages").update({ pinned, pinned_at: pinned ? new Date().toISOString() : null, pinned_by: pinned ? data.clerkUserId : null }).eq("id", data.messageId);
+  if (error) throw new Error(`Failed to update pinned post: ${error.message}`);
+  return { success: true, pinned };
+}));
+
 channelsRouter.post("/get-channel-info", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
@@ -279,4 +325,49 @@ channelsRouter.post("/get-channel-feed", requireAuth, (req, res) => rp(res, asyn
   const { data: messages, error } = await query;
   if (error) throw new Error(`Failed to load channel feed: ${error.message}`);
   return (messages ?? []).reverse();
+}));
+
+
+channelsRouter.post("/request-channel-join", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), message: z.string().max(500).optional() }).parse(req.body);
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, is_private, archived_at").eq("id", data.channelId).maybeSingle();
+  if (!channel || channel.archived_at) throw new Error("Channel not found");
+  if (!channel.is_private) throw new Error("Public channels can be joined directly");
+  const { data: request, error } = await supabaseAdmin.from("channel_join_requests").upsert({ channel_id: data.channelId, clerk_user_id: data.clerkUserId, message: data.message || null, status: "pending", reviewed_by: null, reviewed_at: null }, { onConflict: "channel_id,clerk_user_id" }).select().single();
+  if (error) throw new Error(`Failed to request channel access: ${error.message}`);
+  return request;
+}));
+
+channelsRouter.post("/get-channel-join-requests", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), status: z.enum(["pending", "approved", "rejected"]).optional() }).parse(req.body);
+  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  let query = supabaseAdmin.from("channel_join_requests").select("*").eq("channel_id", data.channelId).order("created_at", { ascending: false }).limit(200);
+  if (data.status) query = query.eq("status", data.status);
+  const { data: requests, error } = await query;
+  if (error) throw new Error(`Failed to load channel join requests: ${error.message}`);
+  return requests || [];
+}));
+
+channelsRouter.post("/review-channel-join-request", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), requestId: z.string().uuid(), decision: z.enum(["approved", "rejected"]) }).parse(req.body);
+  const { data: request } = await supabaseAdmin.from("channel_join_requests").select("*").eq("id", data.requestId).maybeSingle();
+  if (!request) throw new Error("Join request not found");
+  await assertChannelAdmin(data.clerkUserId, request.channel_id);
+  const { error } = await supabaseAdmin.from("channel_join_requests").update({ status: data.decision, reviewed_by: data.clerkUserId, reviewed_at: new Date().toISOString() }).eq("id", data.requestId);
+  if (error) throw new Error(`Failed to review join request: ${error.message}`);
+  if (data.decision === "approved") {
+    const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id").eq("id", request.channel_id).single();
+    if (channel) await grantChannelReadAccess(request.clerk_user_id, channel, "member");
+  }
+  return { success: true, decision: data.decision };
+}));
+
+channelsRouter.post("/get-channel-stats", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id, member_count").eq("id", data.channelId).single();
+  if (!channel) throw new Error("Channel not found");
+  const { count: postCount } = channel.conversation_id ? await supabaseAdmin.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", channel.conversation_id) : { count: 0 };
+  const { count: adminCount } = await supabaseAdmin.from("channel_members").select("id", { count: "exact", head: true }).eq("channel_id", data.channelId).eq("role", "admin");
+  return { subscriberCount: channel.member_count || 0, postCount: postCount || 0, adminCount: adminCount || 0 };
 }));
