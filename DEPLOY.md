@@ -67,3 +67,7 @@ npm run build
 npm audit --omit=dev --audit-level=high
 curl https://api.example.com/health
 ```
+
+## Supabase schema migrations
+
+Render builds the Node service but does not automatically execute Supabase SQL migrations. Before using channel creation, Moments, or Stories on an existing Supabase project, run the files in `supabase/migrations/` in timestamp order in the Supabase SQL Editor. The repair migration `20260910000000_repair_create_flows.sql` is idempotent and restores the standalone channel columns, status/story tables, media columns, and public storage buckets used by the create endpoints.
