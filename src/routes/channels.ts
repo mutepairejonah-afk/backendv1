@@ -144,13 +144,21 @@ channelsRouter.post("/leave-channel", requireAuth, (req, res) => rp(res, async (
 
 // ── Add / remove members (channel admin only) ────────────────────────────────
 channelsRouter.post("/add-channel-member", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255) }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255).optional(), targetUsername: z.string().min(1).max(40).optional() }).refine((value) => value.targetClerkId || value.targetUsername, { message: "Provide a username" }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
   if (!channel) throw new Error("Channel not found");
   await assertChannelAdmin(data.clerkUserId, data.channelId);
-  await supabaseAdmin.from("channel_members").upsert({ channel_id: data.channelId, clerk_user_id: data.targetClerkId, role: "member" }, { onConflict: "channel_id,clerk_user_id" });
-  if (channel.conversation_id) await supabaseAdmin.from("conversation_members").upsert({ conversation_id: channel.conversation_id, clerk_user_id: data.targetClerkId }, { onConflict: "conversation_id,clerk_user_id" });
-  return { success: true };
+  let targetClerkId = data.targetClerkId;
+  if (!targetClerkId && data.targetUsername) {
+    const { data: profile } = await supabaseAdmin.from("profiles").select("clerk_user_id, username").ilike("username", data.targetUsername.replace(/^@/, "")).maybeSingle();
+    if (!profile) throw new Error("No user found for that username");
+    targetClerkId = profile.clerk_user_id;
+  }
+  if (!targetClerkId) throw new Error("Provide a username");
+  const { error: memberError } = await supabaseAdmin.from("channel_members").upsert({ channel_id: data.channelId, clerk_user_id: targetClerkId, role: "member" }, { onConflict: "channel_id,clerk_user_id" });
+  if (memberError) throw new Error(`Failed to add channel member: ${memberError.message}`);
+  if (channel.conversation_id) await supabaseAdmin.from("conversation_members").upsert({ conversation_id: channel.conversation_id, clerk_user_id: targetClerkId }, { onConflict: "conversation_id,clerk_user_id" });
+  return { success: true, username: data.targetUsername?.replace(/^@/, "") || null };
 }));
 
 channelsRouter.post("/remove-channel-member", requireAuth, (req, res) => rp(res, async () => {
@@ -208,7 +216,9 @@ channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, as
   await assertChannelMember(data.clerkUserId, data.channelId);
   const { data: admins, error } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId).eq("role", "admin").order("joined_at", { ascending: true });
   if (error) throw new Error(`Failed to load channel admins: ${error.message}`);
-  return admins || [];
+  const ids = (admins || []).map((admin: any) => admin.clerk_user_id);
+  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url").in("clerk_user_id", ids.length ? ids : ["__none__"]);
+  return (admins || []).map((admin: any) => ({ ...admin, profile: (profiles || []).find((profile: any) => profile.clerk_user_id === admin.clerk_user_id) || null }));
 }));
 
 channelsRouter.post("/set-channel-admin", requireAuth, (req, res) => rp(res, async () => {
