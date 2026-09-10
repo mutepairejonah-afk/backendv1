@@ -10,7 +10,7 @@ alter table if exists public.conversations drop column if exists organization_id
 
 alter table if exists public.channels
   add column if not exists conversation_id uuid references public.conversations(id) on delete set null,
-  add column if not exists public.public_slug text,
+  add column if not exists public_slug text,
   add column if not exists username text,
   add column if not exists description text,
   add column if not exists topic text,
