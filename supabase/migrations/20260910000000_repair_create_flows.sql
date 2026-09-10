@@ -3,6 +3,7 @@
 -- the repository migrations. Every statement is idempotent.
 
 -- Channels are standalone; remove any legacy workspace requirement.
+drop policy if exists channels_select on public.channels;
 alter table if exists public.channels drop constraint if exists channels_organization_id_name_key;
 drop index if exists public.idx_channels_org;
 alter table if exists public.channels drop column if exists organization_id;
