@@ -95,8 +95,10 @@ contactsRouter.post("/reject-contact-request", requireAuth, (req, res) => rp(res
 
 contactsRouter.post("/get-notification-count", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
-  const { count: requestCount } = await supabaseAdmin.from("contacts").select("id", { count: "exact", head: true }).eq("user_clerk_id", data.clerkUserId).eq("status", "pending_incoming");
-  const { data: memberships } = await supabaseAdmin.from("conversation_members").select("unread_count").eq("clerk_user_id", data.clerkUserId);
+  const { count: requestCount, error: requestError } = await supabaseAdmin.from("contacts").select("id", { count: "exact", head: true }).eq("user_clerk_id", data.clerkUserId).eq("status", "pending_incoming");
+  if (requestError) throw new Error(`Failed to load notification requests: ${requestError.message}`);
+  const { data: memberships, error: membershipError } = await supabaseAdmin.from("conversation_members").select("unread_count").eq("clerk_user_id", data.clerkUserId);
+  if (membershipError) throw new Error(`Failed to load unread messages: ${membershipError.message}`);
   const unreadMessages = (memberships || []).reduce((sum: number, m: any) => sum + (m.unread_count || 0), 0);
   return { pendingRequests: requestCount || 0, unreadMessages, total: (requestCount || 0) + unreadMessages };
 }));

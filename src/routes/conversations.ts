@@ -72,7 +72,11 @@ conversationsRouter.post("/get-or-create-direct-conversation", requireAuth, (req
 
 conversationsRouter.post("/mark-conversation-read", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), conversationId: z.string().uuid() }).parse(req.body);
-  await supabaseAdmin.from("conversation_members").update({ unread_count: 0 }).eq("conversation_id", data.conversationId).eq("clerk_user_id", data.clerkUserId);
+  const { data: membership, error: membershipError } = await supabaseAdmin.from("conversation_members").select("id").eq("conversation_id", data.conversationId).eq("clerk_user_id", data.clerkUserId).maybeSingle();
+  if (membershipError) throw new Error(`Failed to verify conversation membership: ${membershipError.message}`);
+  if (!membership) throw new Error("You are not a member of this conversation");
+  const { error } = await supabaseAdmin.from("conversation_members").update({ unread_count: 0 }).eq("id", membership.id);
+  if (error) throw new Error(`Failed to mark conversation read: ${error.message}`);
   return { success: true };
 }));
 
