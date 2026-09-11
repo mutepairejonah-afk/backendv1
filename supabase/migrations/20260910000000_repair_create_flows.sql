@@ -49,6 +49,18 @@ create table if not exists public.stories (
   check (text is not null or image_url is not null or video_url is not null or audio_url is not null)
 );
 
+alter table if exists public.stories
+  add column if not exists clerk_user_id text,
+  add column if not exists text text,
+  add column if not exists image_url text,
+  add column if not exists video_url text,
+  add column if not exists audio_url text,
+  add column if not exists thumbnail_url text,
+  add column if not exists mime_type text,
+  add column if not exists duration_seconds integer,
+  add column if not exists expires_at timestamptz,
+  add column if not exists created_at timestamptz default now();
+
 create table if not exists public.story_views (
   id uuid primary key default gen_random_uuid(),
   story_id uuid not null references public.stories(id) on delete cascade,
