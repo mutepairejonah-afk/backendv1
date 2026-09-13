@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { isBackendAdmin } from "../lib/admin.js";
 
 export const groupsRouter = Router();
 
@@ -14,6 +15,7 @@ const rp = async (res: any, fn: () => Promise<any>) => {
 };
 
 async function assertGroupAdmin(clerkUserId: string, conversationId: string) {
+  if (isBackendAdmin(clerkUserId)) return { type: "group", id: conversationId };
   const { data: conv } = await supabaseAdmin.from("conversations").select("*").eq("id", conversationId).single();
   if (!conv || conv.type !== "group") throw new Error("Not a group conversation");
   const { data: m } = await supabaseAdmin.from("conversation_members").select("role").eq("conversation_id", conversationId).eq("clerk_user_id", clerkUserId).maybeSingle();

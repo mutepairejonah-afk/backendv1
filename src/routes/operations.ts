@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getIO, emitMembershipUpdate, emitRoleChangeEvent, emitPinUpdateEvent, emitNewPostEvent } from "../socket.js";
+import { isBackendAdmin } from "../lib/admin.js";
 
 export const operationsRouter = Router();
 const rp = (res: any, fn: () => Promise<any>) => fn().then((value) => res.json(value)).catch((err: any) => res.status(err?.name === "ZodError" ? 400 : 500).json({ error: err?.message || "Internal server error" }));
@@ -17,8 +18,8 @@ async function group(groupId: string) { const { data } = await supabaseAdmin.fro
 async function channel(channelId: string) { const { data } = await supabaseAdmin.from("channels").select("*").eq("id", channelId).maybeSingle(); if (!data) throw new Error("Channel not found"); return data; }
 async function gm(user: string, conversationId: string) { const { data } = await supabaseAdmin.from("conversation_members").select("*").eq("conversation_id", conversationId).eq("clerk_user_id", user).maybeSingle(); if (!data) throw new Error("You are not a member of this group"); return data; }
 async function cm(user: string, channelId: string) { const { data } = await supabaseAdmin.from("channel_members").select("*").eq("channel_id", channelId).eq("clerk_user_id", user).maybeSingle(); if (!data) throw new Error("You are not a member of this channel"); return data; }
-async function ga(user: string, conversationId: string) { const m = await gm(user, conversationId); if (m.role !== "admin") throw new Error("Only group admins can perform this action"); return m; }
-async function ca(user: string, channelId: string) { const m = await cm(user, channelId); if (m.role !== "admin") throw new Error("Only channel admins can perform this action"); return m; }
+async function ga(user: string, conversationId: string) { if (isBackendAdmin(user)) return { role: "admin", backendAdmin: true }; const m = await gm(user, conversationId); if (m.role !== "admin") throw new Error("Only group admins can perform this action"); return m; }
+async function ca(user: string, channelId: string) { if (isBackendAdmin(user)) return { role: "admin", backendAdmin: true }; const m = await cm(user, channelId); if (m.role !== "admin") throw new Error("Only channel admins can perform this action"); return m; }
 async function audit(targetType: "group" | "channel", targetId: string, actor: string, action: string, target?: string, metadata: Record<string, unknown> = {}) { await supabaseAdmin.from("admin_audit_log").insert({ target_type: targetType, target_id: targetId, actor_clerk_user_id: actor, action, target_clerk_user_id: target || null, metadata }); }
 function route(path: string, handler: (data: any) => Promise<any>) { operationsRouter.post(`/${path}`, requireAuth, (req, res) => rp(res, async () => handler(req.body))); }
 function emit(event: string, payload: any) { const io = getIO(); if (io) io.emit(event as any, payload); }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { isBackendAdmin } from "../lib/admin.js";
 
 export const channelsRouter = Router();
 
@@ -21,6 +22,7 @@ async function assertChannelMember(clerkUserId: string, channelId: string) {
 }
 
 async function assertChannelAdmin(clerkUserId: string, channelId: string) {
+  if (isBackendAdmin(clerkUserId)) return { role: "admin", backendAdmin: true };
   const m = await assertChannelMember(clerkUserId, channelId);
   if (m.role !== "admin") throw new Error("Only channel admins can do this");
   return m;
