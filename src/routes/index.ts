@@ -16,6 +16,7 @@ import { aiRouter } from "./ai.js";
 import { supportRouter } from "./support.js";
 import { securityRouter } from "./security.js";
 import { operationsRouter } from "./operations.js";
+import { paymentsRouter } from "./payments.js";
 
 export const apiRouter = Router();
 
@@ -36,3 +37,4 @@ apiRouter.use(aiRouter);
 apiRouter.use(supportRouter);
 apiRouter.use(securityRouter);
 apiRouter.use(operationsRouter);
+apiRouter.use(paymentsRouter);
