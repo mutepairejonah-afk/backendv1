@@ -62,3 +62,31 @@ storiesRouter.post("/get-story-viewers", requireAuth, (req, res) => reply(res, a
   const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url").in("clerk_user_id", ids.length ? ids : ["__none__"]);
   return { viewers: (views || []).map((v: any) => ({ ...v, profile: (profiles || []).find((p: any) => p.clerk_user_id === v.clerk_user_id) || null })), count: views?.length || 0 };
 }));
+
+// Kept as a separate endpoint because the profile screen requests highlights
+// independently from the live 24-hour story feed. Until permanent highlight
+// collections are enabled, active stories are the canonical fallback.
+storiesRouter.post("/create-story-highlight", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), title: z.string().min(1).max(60), storyIds: z.array(z.string().uuid()).min(1).max(100), coverUrl: z.string().url().max(2048).optional() }).parse(req.body);
+  const { data: ownedStories, error: storyError } = await supabaseAdmin.from("stories").select("id").in("id", data.storyIds).eq("clerk_user_id", data.clerkUserId);
+  if (storyError) throw new Error(`Failed to validate highlight stories: ${storyError.message}`);
+  if ((ownedStories || []).length !== data.storyIds.length) throw new Error("You can only add your own stories to a highlight");
+  const { data: row, error } = await supabaseAdmin.from("story_highlights").insert({ clerk_user_id: data.clerkUserId, title: data.title, story_ids: data.storyIds, cover_url: data.coverUrl || null }).select().single();
+  if (error) throw new Error(`Failed to create highlight: ${error.message}`);
+  return row;
+}));
+
+storiesRouter.post("/get-story-highlights", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), targetClerkUserId: z.string().min(1).max(255).optional(), userId: z.string().min(1).max(255).optional() }).parse(req.body);
+  const ownerId = data.targetClerkUserId || data.userId || data.clerkUserId;
+  const { data: rows, error } = await supabaseAdmin.from("story_highlights").select("*").eq("clerk_user_id", ownerId).order("created_at", { ascending: true });
+  if (error) throw new Error(`Failed to get story highlights: ${error.message}`);
+  return rows || [];
+}));
+
+storiesRouter.post("/delete-story-highlight", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), highlightId: z.string().uuid() }).parse(req.body);
+  const { error } = await supabaseAdmin.from("story_highlights").delete().eq("id", data.highlightId).eq("clerk_user_id", data.clerkUserId);
+  if (error) throw new Error(`Failed to delete highlight: ${error.message}`);
+  return { success: true };
+}));
