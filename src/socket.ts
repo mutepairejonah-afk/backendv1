@@ -46,6 +46,12 @@ type ClientToServer = {
   "push:register": (data: { clerkUserId: string; token: string }) => void;
   "conv:join": (conversationId: string) => void;
   "conv:leave": (conversationId: string) => void;
+  "room:join": (room: string) => void;
+  "room:leave": (room: string) => void;
+  "membership:update": (data: { room: string; payload: any }) => void;
+  "role:change": (data: { room: string; payload: any }) => void;
+  "pin:update": (data: { room: string; payload: any }) => void;
+  "post:new": (data: { room: string; payload: any }) => void;
   "message:sent": (data: { conversationId: string; message: any; participantIds?: string[]; senderName?: string }) => void;
   "message:edit": (data: { conversationId: string; messageId: string; newText: string; editedAt: string }) => void;
   "message:delete": (data: { conversationId: string; messageId: string }) => void;
@@ -78,6 +84,10 @@ type ServerToClient = {
   "call:signal": (data: { fromClerkId: string; signal: any }) => void;
   "ai:response": (data: { reply: string; error?: string }) => void;
   "msg:reaction": (data: { messageId: string; reactions: Record<string, string[]> }) => void;
+  "membership:update": (payload: any) => void;
+  "role:changed": (payload: any) => void;
+  "pin:update": (payload: any) => void;
+  "channel:post": (payload: any) => void;
 };
 
 interface SocketData { clerkUserId?: string; }
@@ -153,6 +163,21 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
       } catch (e) { console.error("[socket.io] room authorization failed:", e); }
     });
     socket.on("conv:leave", safe((conversationId) => { if (allowEvent("conv:leave") && typeof conversationId === "string") socket.leave(convRoom(conversationId)); }));
+
+    socket.on("room:join", async (room) => {
+      if (!allowEvent("room:join") || typeof room !== "string" || room.length > 200) return;
+      // Room joining is intentionally limited to conversation rooms. The
+      // membership check prevents arbitrary cross-tenant subscriptions.
+      const conversationId = room.startsWith("conv:") ? room.slice(5) : room;
+      const { data: membership } = await supabaseAdmin.from("conversation_members").select("id").eq("conversation_id", conversationId).eq("clerk_user_id", socket.data.clerkUserId).maybeSingle();
+      if (membership) socket.join(convRoom(conversationId));
+    });
+    socket.on("room:leave", safe((room) => { if (allowEvent("room:leave") && typeof room === "string") socket.leave(room.startsWith("conv:") ? room : convRoom(room)); }));
+
+    socket.on("membership:update", safe(({ room, payload }) => { if (allowEvent("membership:update") && room) emitMembershipUpdate(room, payload); }));
+    socket.on("role:change", safe(({ room, payload }) => { if (allowEvent("role:change") && room) emitRoleChangeEvent(room, payload); }));
+    socket.on("pin:update", safe(({ room, payload }) => { if (allowEvent("pin:update") && room) emitPinUpdateEvent(room, payload); }));
+    socket.on("post:new", safe(({ room, payload }) => { if (allowEvent("post:new") && room) emitNewPostEvent(room, payload); }));
 
     socket.on("message:sent", safe(({ conversationId, message, participantIds, senderName }) => {
       if (!allowEvent("message:sent", 30)) return;
@@ -252,3 +277,14 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
 }
 
 export function getIO() { return io; }
+
+function emitRoom(room: string, event: string, payload: unknown) {
+  if (!io) return;
+  const target = room.startsWith("conv:") || room.startsWith("channel:") || room.startsWith("group:") ? room : `conv:${room}`;
+  safeEmit(() => io!.to(target).emit(event as any, payload));
+}
+
+export function emitMembershipUpdate(room: string, payload: unknown) { emitRoom(room, "membership:update", payload); }
+export function emitRoleChangeEvent(room: string, payload: unknown) { emitRoom(room, "role:changed", payload); }
+export function emitPinUpdateEvent(room: string, payload: unknown) { emitRoom(room, "pin:update", payload); }
+export function emitNewPostEvent(room: string, payload: unknown) { emitRoom(room, "channel:post", payload); }
