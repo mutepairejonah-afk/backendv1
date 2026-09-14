@@ -123,7 +123,7 @@ conversationsRouter.post("/get-conversation-details", requireAuth, (req, res) =>
   if (!conv) throw new Error("Conversation not found");
   const { data: members } = await supabaseAdmin.from("conversation_members").select("clerk_user_id").eq("conversation_id", data.conversationId);
   const clerkIds = members?.map((m: any) => m.clerk_user_id) || [];
-  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, is_online, last_seen").in("clerk_user_id", clerkIds.length ? clerkIds : ["__none__"]);
+  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, is_online, last_seen, verified, is_admin, subscription_tier").in("clerk_user_id", clerkIds.length ? clerkIds : ["__none__"]);
   return { ...conv, members: profiles || [] };
 }));
 

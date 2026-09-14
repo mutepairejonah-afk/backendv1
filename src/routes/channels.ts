@@ -219,7 +219,7 @@ channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, as
   const { data: admins, error } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId).eq("role", "admin").order("joined_at", { ascending: true });
   if (error) throw new Error(`Failed to load channel admins: ${error.message}`);
   const ids = (admins || []).map((admin: any) => admin.clerk_user_id);
-  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url").in("clerk_user_id", ids.length ? ids : ["__none__"]);
+  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url, verified, is_admin, subscription_tier").in("clerk_user_id", ids.length ? ids : ["__none__"]);
   return (admins || []).map((admin: any) => ({ ...admin, profile: (profiles || []).find((profile: any) => profile.clerk_user_id === admin.clerk_user_id) || null }));
 }));
 
@@ -272,7 +272,7 @@ channelsRouter.post("/get-channel-info", requireAuth, (req, res) => rp(res, asyn
 
   const { data: members } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId);
   const ids = members?.map((m: any) => m.clerk_user_id) || [];
-  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, username").in("clerk_user_id", ids.length ? ids : ["__none__"]);
+  const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, username, verified, is_admin, subscription_tier").in("clerk_user_id", ids.length ? ids : ["__none__"]);
   return { ...channel, members: (members || []).map((m: any) => ({ ...m, profile: profiles?.find((p: any) => p.clerk_user_id === m.clerk_user_id) || null })) };
 }));
 
