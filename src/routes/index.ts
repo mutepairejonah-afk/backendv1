@@ -17,6 +17,7 @@ import { supportRouter } from "./support.js";
 import { securityRouter } from "./security.js";
 import { operationsRouter } from "./operations.js";
 import { paymentsRouter } from "./payments.js";
+import { spacesRouter } from "./spaces.js";
 
 export const apiRouter = Router();
 
@@ -38,3 +39,4 @@ apiRouter.use(supportRouter);
 apiRouter.use(securityRouter);
 apiRouter.use(operationsRouter);
 apiRouter.use(paymentsRouter);
+apiRouter.use(spacesRouter);

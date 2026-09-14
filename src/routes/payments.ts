@@ -8,11 +8,31 @@ export const paymentsRouter = Router();
 const reply = (res: any, fn: () => Promise<any>) => fn().then((value) => res.json(value)).catch((err: any) => res.status(err?.name === "ZodError" ? 400 : 500).json({ error: process.env.NODE_ENV === "production" && err?.name !== "ZodError" ? "Internal server error" : (err?.message || "Internal server error") }));
 const userId = z.string().min(1).max(255);
 
+function decodeScreenshot(base64: string, mimeType: string): Buffer {
+  if (!/^image\/(jpeg|png)$/.test(mimeType)) throw new Error("Only JPEG and PNG screenshots are supported");
+  const normalized = base64.replace(/^data:[^;]+;base64,/, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) throw new Error("Invalid screenshot data");
+  const buffer = Buffer.from(normalized, "base64");
+  if (!buffer.length || buffer.length > 10 * 1024 * 1024) throw new Error("Screenshot exceeds the 10 MB limit");
+  return buffer;
+}
+
 async function assertPaymentAdmin(clerkUserId: string) {
   if (isBackendAdmin(clerkUserId)) return;
   const { data: profile } = await supabaseAdmin.from("profiles").select("is_admin").eq("clerk_user_id", clerkUserId).maybeSingle();
   if (!profile?.is_admin) throw new Error("Access denied. Admin privileges required.");
 }
+
+paymentsRouter.post("/upload-payment-screenshot", requireAuth, (req, res) => reply(res, async () => {
+  const data = z.object({ clerkUserId: userId, fileBase64: z.string().min(1), mimeType: z.enum(["image/jpeg", "image/png"]), fileName: z.string().min(1).max(255) }).parse(req.body);
+  const buffer = decodeScreenshot(data.fileBase64, data.mimeType);
+  const safeName = data.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const storagePath = `payments/${data.clerkUserId}/${Date.now()}-${safeName}`;
+  const { error } = await supabaseAdmin.storage.from("payment-screenshots").upload(storagePath, buffer, { contentType: data.mimeType, upsert: false });
+  if (error) throw new Error(`Screenshot upload failed: ${error.message}`);
+  const { data: urlData } = supabaseAdmin.storage.from("payment-screenshots").getPublicUrl(storagePath);
+  return { url: urlData.publicUrl };
+}));
 
 paymentsRouter.post("/submit-payment", requireAuth, (req, res) => reply(res, async () => {
   const data = z.object({ clerkUserId: userId, displayName: z.string().max(100).optional(), amount: z.number().positive(), currency: z.enum(["USD", "ZiG"]), transactionId: z.string().min(1).max(25), screenshotUrl: z.string().url().optional(), disputeNote: z.string().max(500).optional() }).parse(req.body);
