@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { notifyContactRequest } from "../socket.js";
 
 export const contactsRouter = Router();
 
@@ -43,6 +44,8 @@ contactsRouter.post("/add-contact", requireAuth, (req, res) => rp(res, async () 
   if (e1) throw new Error(`Failed to send request: ${e1.message}`);
   const { error: e2 } = await supabaseAdmin.from("contacts").upsert({ user_clerk_id: data.contactClerkId, contact_clerk_id: data.clerkUserId, status: "pending_incoming" }, { onConflict: "user_clerk_id,contact_clerk_id" });
   if (e2) throw new Error(`Failed to deliver request: ${e2.message}`);
+  const { data: requester } = await supabaseAdmin.from("profiles").select("display_name, username").eq("clerk_user_id", data.clerkUserId).maybeSingle();
+  notifyContactRequest(data.contactClerkId, data.clerkUserId, requester?.display_name || (requester?.username ? `@${requester.username}` : undefined));
   return { status: "pending_outgoing" as const };
 }));
 

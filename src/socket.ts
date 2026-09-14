@@ -69,6 +69,7 @@ type ClientToServer = {
 };
 
 type ServerToClient = {
+  "contact:request": (data: { requesterClerkId: string; requesterName?: string }) => void;
   "message:new": (data: { conversationId: string; message: any }) => void;
   "message:edited": (data: { conversationId: string; messageId: string; newText: string; editedAt: string }) => void;
   "message:deleted": (data: { conversationId: string; messageId: string }) => void;
@@ -101,6 +102,14 @@ function safeEmit(fn: () => void) { try { fn(); } catch (e) { console.error("[so
 function relayToUser(_socket: AppSocket, toClerkId: string, event: keyof ServerToClient, payload: any) {
   if (!io) return;
   safeEmit(() => io!.to(userRoom(toClerkId)).emit(event, payload));
+}
+
+export function notifyContactRequest(toClerkId: string, requesterClerkId: string, requesterName?: string) {
+  if (!io) return;
+  const payload = { requesterClerkId, requesterName };
+  safeEmit(() => io!.to(userRoom(toClerkId)).emit("contact:request", payload));
+  const token = pushTokens.get(toClerkId);
+  if (token) void sendExpoPush({ token, title: "New friend request", body: `${requesterName || "Someone"} wants to connect with you`, data: { type: "contact_request", requesterClerkId } });
 }
 
 const IO_OPTS = {
