@@ -20,7 +20,8 @@ profilesRouter.post("/get-or-create-profile", requireAuth, (req, res) => rp(res,
     avatarUrl: z.string().url().max(2048).optional(),
   }).parse(req.body);
 
-  const { data: existing } = await supabaseAdmin.from("profiles").select("*").eq("clerk_user_id", data.clerkUserId).single();
+  const { data: existing, error: lookupError } = await supabaseAdmin.from("profiles").select("*").eq("clerk_user_id", data.clerkUserId).maybeSingle();
+  if (lookupError) throw new Error(`Failed to look up profile: ${lookupError.message}`);
   if (existing) return existing;
 
   const { data: profile, error } = await supabaseAdmin.from("profiles").insert({
@@ -29,7 +30,19 @@ profilesRouter.post("/get-or-create-profile", requireAuth, (req, res) => rp(res,
     avatar_url: data.avatarUrl || null,
     is_online: true,
   }).select().single();
-  if (error) throw new Error(`Failed to create profile: ${error.message}`);
+  if (error) {
+    // Two app shells can bootstrap the same new account at once. If the
+    // unique Clerk ID constraint wins in another request, return that row.
+    if (error.code === "23505") {
+      const { data: concurrentProfile, error: concurrentLookupError } = await supabaseAdmin
+        .from("profiles")
+        .select("*")
+        .eq("clerk_user_id", data.clerkUserId)
+        .maybeSingle();
+      if (!concurrentLookupError && concurrentProfile) return concurrentProfile;
+    }
+    throw new Error(`Failed to create profile: ${error.message}`);
+  }
   return profile;
 }));
 
