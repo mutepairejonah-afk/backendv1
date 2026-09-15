@@ -299,7 +299,7 @@ channelsRouter.post("/discover-channels", requireAuth, (req, res) => rp(res, asy
 
 channelsRouter.post("/get-followed-channels", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
-  const { data: follows, error } = await supabaseAdmin.from("channel_members").select("channel_id, joined_at, muted, last_read_at").eq("clerk_user_id", data.clerkUserId).eq("role", "subscriber").order("joined_at", { ascending: false });
+  const { data: follows, error } = await supabaseAdmin.from("channel_members").select("channel_id, role, joined_at, muted, last_read_at").eq("clerk_user_id", data.clerkUserId).order("joined_at", { ascending: false });
   if (error) throw new Error(`Failed to load followed channels: ${error.message}`);
   const ids = (follows ?? []).map((row: any) => row.channel_id);
   if (!ids.length) return [];
