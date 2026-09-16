@@ -17,14 +17,14 @@ callsRouter.post("/log-call", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ conversationId: z.string().uuid(), callerClerkId: z.string().min(1).max(255), calleeClerkId: z.string().min(1).max(255), kind: z.enum(["audio", "video"]), status: z.enum(["answered", "missed", "rejected", "cancelled"]), durationSeconds: z.number().int().min(0).default(0), startedAt: z.string().optional() }).parse(req.body);
   const startedAt = data.startedAt || new Date().toISOString();
   const { data: row, error } = await supabaseAdmin.from("call_logs").insert({ conversation_id: data.conversationId, caller_clerk_id: data.callerClerkId, callee_clerk_id: data.calleeClerkId, kind: data.kind, status: data.status, duration_seconds: data.durationSeconds, started_at: startedAt, ended_at: new Date().toISOString() }).select("*").single();
-  if (error) { console.error("logCall failed:", error); return null; }
+  if (error) { console.error("logCall failed:", error); throw new Error(`Failed to save call log: ${error.message}`); }
   return row;
 }));
 
 callsRouter.post("/get-call-history", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
   const { data: rows, error } = await supabaseAdmin.from("call_logs").select("*").or(`caller_clerk_id.eq.${data.clerkUserId},callee_clerk_id.eq.${data.clerkUserId}`).order("started_at", { ascending: false }).limit(150);
-  if (error) return [];
+  if (error) throw new Error(`Failed to fetch call history: ${error.message}`);
   if (!rows || rows.length === 0) return [];
   const peerIds = Array.from(new Set(rows.map((r: any) => r.caller_clerk_id === data.clerkUserId ? r.callee_clerk_id : r.caller_clerk_id)));
   const { data: profs } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, username").in("clerk_user_id", peerIds);

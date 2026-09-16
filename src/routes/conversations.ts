@@ -44,7 +44,15 @@ conversationsRouter.post("/get-conversations", requireAuth, (req, res) => rp(res
     const muted = membership?.mute_until && new Date(membership.mute_until).getTime() > Date.now();
     return { ...conv, isPinned: membership?.is_pinned || false, unreadCount: membership?.unread_count || 0, isMuted: !!muted, muteUntil: membership?.mute_until || null, lastMessage: lastMsg, contact: memberProfiles[0] || null, memberProfiles, memberCount: (allMembers?.filter((m: any) => m.conversation_id === conv.id) || []).length };
   }));
-  return results;
+  const seenDirectPeers = new Set<string>();
+  return results.filter((conversation: any) => {
+    if (conversation.type !== "direct") return true;
+    const peerId = conversation.memberProfiles?.[0]?.clerk_user_id || conversation.contact?.clerk_user_id;
+    if (!peerId) return true;
+    if (seenDirectPeers.has(peerId)) return false;
+    seenDirectPeers.add(peerId);
+    return true;
+  });
 }));
 
 conversationsRouter.post("/get-or-create-direct-conversation", requireAuth, (req, res) => rp(res, async () => {
@@ -53,10 +61,12 @@ conversationsRouter.post("/get-or-create-direct-conversation", requireAuth, (req
     const { data: friendship } = await supabaseAdmin.from("contacts").select("status").eq("user_clerk_id", data.clerkUserId).eq("contact_clerk_id", data.otherClerkId).maybeSingle();
     if (!friendship || friendship.status !== "accepted") throw new Error("You can only message accepted contacts. Send a friend request first.");
   }
-  const { data: myConvs } = await supabaseAdmin.from("conversation_members").select("conversation_id").eq("clerk_user_id", data.clerkUserId);
+  const { data: myConvs, error: myMembershipError } = await supabaseAdmin.from("conversation_members").select("conversation_id").eq("clerk_user_id", data.clerkUserId);
+  if (myMembershipError) throw new Error(`Failed to find your conversations: ${myMembershipError.message}`);
   if (myConvs?.length) {
     const convIds = myConvs.map((c: any) => c.conversation_id);
-    const { data: otherMemberships } = await supabaseAdmin.from("conversation_members").select("conversation_id").eq("clerk_user_id", data.otherClerkId).in("conversation_id", convIds);
+    const { data: otherMemberships, error: otherMembershipError } = await supabaseAdmin.from("conversation_members").select("conversation_id").eq("clerk_user_id", data.otherClerkId).in("conversation_id", convIds);
+    if (otherMembershipError) throw new Error(`Failed to find the existing chat: ${otherMembershipError.message}`);
     if (otherMemberships?.length) {
       for (const om of otherMemberships) {
         const { data: conv } = await supabaseAdmin.from("conversations").select("*").eq("id", (om as any).conversation_id).eq("type", "direct").single();
@@ -66,7 +76,11 @@ conversationsRouter.post("/get-or-create-direct-conversation", requireAuth, (req
   }
   const { data: conv, error } = await supabaseAdmin.from("conversations").insert({ type: "direct" }).select().single();
   if (error) throw new Error(`Failed to create conversation: ${error.message}`);
-  await supabaseAdmin.from("conversation_members").insert([{ conversation_id: conv.id, clerk_user_id: data.clerkUserId }, { conversation_id: conv.id, clerk_user_id: data.otherClerkId }]);
+  const { error: memberError } = await supabaseAdmin.from("conversation_members").upsert(
+    [{ conversation_id: conv.id, clerk_user_id: data.clerkUserId }, { conversation_id: conv.id, clerk_user_id: data.otherClerkId }],
+    { onConflict: "conversation_id,clerk_user_id" },
+  );
+  if (memberError) throw new Error(`Failed to add direct-chat members: ${memberError.message}`);
   return conv;
 }));
 

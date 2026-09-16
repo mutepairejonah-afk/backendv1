@@ -32,9 +32,10 @@ groupsRouter.post("/create-group", requireAuth, (req, res) => rp(res, async () =
   const data = z.object({ clerkUserId: z.string().min(1).max(255), name: z.string().min(1).max(100), description: z.string().max(500).optional(), avatarUrl: z.string().url().max(2048).optional(), memberClerkIds: z.array(z.string().min(1).max(255)).min(1).max(256) }).parse(req.body);
   const { data: conv, error } = await supabaseAdmin.from("conversations").insert({ type: "group", name: data.name, description: data.description || null, avatar_url: data.avatarUrl || null, created_by: data.clerkUserId }).select().single();
   if (error) throw new Error(`Failed to create group: ${error.message}`);
-  const allMembers = [data.clerkUserId, ...data.memberClerkIds.filter((m) => m !== data.clerkUserId)];
+  const allMembers = [...new Set([data.clerkUserId, ...data.memberClerkIds])];
   const memberRows = allMembers.map((clerkId) => ({ conversation_id: conv.id, clerk_user_id: clerkId, role: clerkId === data.clerkUserId ? "admin" : "member" }));
-  await supabaseAdmin.from("conversation_members").insert(memberRows);
+  const { error: memberError } = await supabaseAdmin.from("conversation_members").upsert(memberRows, { onConflict: "conversation_id,clerk_user_id" });
+  if (memberError) throw new Error(`Failed to add group members: ${memberError.message}`);
   return conv;
 }));
 
