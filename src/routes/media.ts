@@ -87,7 +87,8 @@ mediaRouter.post("/upload-avatar", requireAuth, (req, res) => rp(res, async () =
   const { error: uploadError } = await supabaseAdmin.storage.from("chat-media").upload(storagePath, buffer, { contentType: data.contentType, upsert: true });
   if (uploadError) throw new Error(`Avatar upload failed: ${uploadError.message}`);
   const { data: urlData } = supabaseAdmin.storage.from("chat-media").getPublicUrl(storagePath);
-  await supabaseAdmin.from("profiles").update({ avatar_url: urlData.publicUrl }).eq("clerk_user_id", data.clerkUserId);
+  const { error: profileError } = await supabaseAdmin.from("profiles").update({ avatar_url: urlData.publicUrl }).eq("clerk_user_id", data.clerkUserId);
+  if (profileError) throw new Error(`Failed to save avatar profile: ${profileError.message}`);
   return { publicUrl: urlData.publicUrl };
 }));
 

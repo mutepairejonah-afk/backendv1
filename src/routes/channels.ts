@@ -52,8 +52,12 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
   const { data: channel, error } = await supabaseAdmin.from("channels").insert({ conversation_id: conv.id, name: slugName, public_slug: publicSlug, topic: data.topic || null, is_private: data.isPrivate || false, is_broadcast: data.isBroadcast || false, is_discoverable: data.isDiscoverable ?? true, username: data.username?.toLowerCase() || null, description: data.description || null, created_by: data.clerkUserId }).select().single();
   if (error) throw new Error(`Failed to create channel: ${error.message}`);
 
-  const members = [data.clerkUserId, ...(data.memberClerkIds || []).filter((id) => id !== data.clerkUserId)];
-  await supabaseAdmin.from("channel_members").insert(members.map((clerkId) => ({ channel_id: channel.id, clerk_user_id: clerkId, role: clerkId === data.clerkUserId ? "admin" : "member" })));
+  const members = [...new Set([data.clerkUserId, ...(data.memberClerkIds || [])])];
+  const { error: memberError } = await supabaseAdmin.from("channel_members").upsert(
+    members.map((clerkId) => ({ channel_id: channel.id, clerk_user_id: clerkId, role: clerkId === data.clerkUserId ? "admin" : "member" })),
+    { onConflict: "channel_id,clerk_user_id" },
+  );
+  if (memberError) throw new Error(`Failed to add channel members: ${memberError.message}`);
   for (const clerkId of members) {
     await supabaseAdmin.from("conversation_members").upsert({ conversation_id: conv.id, clerk_user_id: clerkId }, { onConflict: "conversation_id,clerk_user_id" });
   }

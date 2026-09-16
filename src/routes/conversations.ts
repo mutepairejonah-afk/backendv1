@@ -112,8 +112,12 @@ conversationsRouter.post("/create-group-conversation", requireAuth, (req, res) =
   const data = z.object({ clerkUserId: z.string().min(1).max(255), name: z.string().min(1).max(100), memberClerkIds: z.array(z.string()).min(1).max(50) }).parse(req.body);
   const { data: conv, error } = await supabaseAdmin.from("conversations").insert({ type: "group", name: data.name }).select().single();
   if (error) throw new Error(`Failed to create group: ${error.message}`);
-  const allMembers = [data.clerkUserId, ...data.memberClerkIds];
-  await supabaseAdmin.from("conversation_members").insert(allMembers.map((clerkId) => ({ conversation_id: conv.id, clerk_user_id: clerkId })));
+  const allMembers = [...new Set([data.clerkUserId, ...data.memberClerkIds])];
+  const { error: memberError } = await supabaseAdmin.from("conversation_members").upsert(
+    allMembers.map((clerkId) => ({ conversation_id: conv.id, clerk_user_id: clerkId })),
+    { onConflict: "conversation_id,clerk_user_id" },
+  );
+  if (memberError) throw new Error(`Failed to add group members: ${memberError.message}`);
   return conv;
 }));
 

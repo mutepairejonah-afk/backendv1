@@ -76,10 +76,12 @@ const largeBodyRoutes = [
   "/api/upload-document-message",
   "/api/upload-avatar",
   "/api/upload-moment-image",
+  "/api/upload-story-media",
+  "/api/upload-video-status",
   "/api/upload-group-avatar",
   "/api/upload-payment-screenshot",
 ];
-for (const route of largeBodyRoutes) app.use(route, express.json({ limit: "20mb" }));
+for (const route of largeBodyRoutes) app.use(route, express.json({ limit: "140mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
