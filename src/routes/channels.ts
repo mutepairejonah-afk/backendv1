@@ -34,6 +34,13 @@ async function assertChannelOwner(clerkUserId: string, channelId: string) {
   return channel;
 }
 
+async function assertChannelModerator(clerkUserId: string, channelId: string) {
+  if (isBackendAdmin(clerkUserId)) return { role: "admin", backendAdmin: true };
+  const { data: m } = await supabaseAdmin.from("channel_members").select("role").eq("channel_id", channelId).eq("clerk_user_id", clerkUserId).maybeSingle();
+  if (!m || !["admin", "moderator"].includes(m.role)) throw new Error("Only channel admins or moderators can do this");
+  return m;
+}
+
 async function grantChannelReadAccess(clerkUserId: string, channel: { id: string; conversation_id?: string | null }, role: "member" | "subscriber") {
   const { data: existing } = await supabaseAdmin.from("channel_members").select("role").eq("channel_id", channel.id).eq("clerk_user_id", clerkUserId).maybeSingle();
   const effectiveRole = existing?.role === "admin" ? "admin" : role;
@@ -232,7 +239,7 @@ channelsRouter.post("/send-channel-post", requireAuth, (req, res) => rp(res, asy
 channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
   await assertChannelMember(data.clerkUserId, data.channelId);
-  const { data: admins, error } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId).eq("role", "admin").order("joined_at", { ascending: true });
+  const { data: admins, error } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId).in("role", ["admin", "moderator"]).order("joined_at", { ascending: true });
   if (error) throw new Error(`Failed to load channel admins: ${error.message}`);
   const ids = (admins || []).map((admin: any) => admin.clerk_user_id);
   const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, username, avatar_url, verified, is_admin, subscription_tier").in("clerk_user_id", ids.length ? ids : ["__none__"]);
@@ -240,12 +247,13 @@ channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, as
 }));
 
 channelsRouter.post("/set-channel-admin", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255), isAdmin: z.boolean() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255), isAdmin: z.boolean().optional(), role: z.enum(["admin", "moderator", "member"]).optional() }).refine((value) => value.isAdmin !== undefined || value.role !== undefined, { message: "Provide a role" }).parse(req.body);
   await assertChannelOwner(data.clerkUserId, data.channelId);
-  if (data.targetClerkId === data.clerkUserId && !data.isAdmin) throw new Error("The channel must keep an administrator");
-  const { error } = await supabaseAdmin.from("channel_members").update({ role: data.isAdmin ? "admin" : "member" }).eq("channel_id", data.channelId).eq("clerk_user_id", data.targetClerkId);
+  const nextRole = data.role || (data.isAdmin ? "admin" : "member");
+  if (data.targetClerkId === data.clerkUserId && nextRole !== "admin") throw new Error("The channel owner must remain a full administrator");
+  const { error } = await supabaseAdmin.from("channel_members").update({ role: nextRole }).eq("channel_id", data.channelId).eq("clerk_user_id", data.targetClerkId);
   if (error) throw new Error(`Failed to update channel admin: ${error.message}`);
-  return { success: true, isAdmin: data.isAdmin };
+  return { success: true, role: nextRole, isAdmin: nextRole === "admin" };
 }));
 
 channelsRouter.post("/search-channel-posts", requireAuth, (req, res) => rp(res, async () => {
@@ -260,7 +268,7 @@ channelsRouter.post("/search-channel-posts", requireAuth, (req, res) => rp(res, 
 
 channelsRouter.post("/pin-channel-post", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), messageId: z.string().uuid(), pinned: z.boolean().optional() }).parse(req.body);
-  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  await assertChannelModerator(data.clerkUserId, data.channelId);
   const { data: channel } = await supabaseAdmin.from("channels").select("conversation_id").eq("id", data.channelId).maybeSingle();
   if (!channel?.conversation_id) throw new Error("Channel not found");
   const { data: message } = await supabaseAdmin.from("messages").select("id").eq("id", data.messageId).eq("conversation_id", channel.conversation_id).maybeSingle();
@@ -283,7 +291,7 @@ channelsRouter.post("/get-channel-info", requireAuth, (req, res) => rp(res, asyn
   // Broadcast-channel subscriber anonymity: subscribers must not be able to
   // see who else follows the channel. Only channel admins get the roster;
   // everyone else gets an aggregated count only.
-  const isChannelAdmin = membership.role === "admin";
+  const isChannelAdmin = ["admin", "moderator"].includes(membership.role);
   if (channel.is_broadcast && !isChannelAdmin) {
     const { count } = await supabaseAdmin.from("channel_members").select("id", { count: "exact", head: true }).eq("channel_id", data.channelId);
     return { ...channel, commentsGroupId, subscriberCount: count || 0, members: [] };

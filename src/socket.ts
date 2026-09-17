@@ -71,6 +71,7 @@ type ClientToServer = {
 type ServerToClient = {
   "contact:request": (data: { requesterClerkId: string; requesterName?: string }) => void;
   "message:new": (data: { conversationId: string; message: any }) => void;
+  "comment:reply": (data: { conversationId: string; message: any; parentMessageId: string }) => void;
   "message:edited": (data: { conversationId: string; messageId: string; newText: string; editedAt: string }) => void;
   "message:deleted": (data: { conversationId: string; messageId: string }) => void;
   "read:receipt": (data: { conversationId: string; messageId: string; clerkUserId: string }) => void;
@@ -188,28 +189,40 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
     socket.on("pin:update", safe(({ room, payload }) => { if (allowEvent("pin:update") && room) emitPinUpdateEvent(room, payload); }));
     socket.on("post:new", safe(({ room, payload }) => { if (allowEvent("post:new") && room) emitNewPostEvent(room, payload); }));
 
-    socket.on("message:sent", safe(({ conversationId, message, participantIds, senderName }) => {
-      if (!allowEvent("message:sent", 30)) return;
-      if (!conversationId || !message) return;
-      socket.to(convRoom(conversationId)).emit("message:new", { conversationId, message });
-      if (Array.isArray(participantIds)) {
+    socket.on("message:sent", async ({ conversationId, message, participantIds, senderName }) => {
+      try {
+        if (!allowEvent("message:sent", 30) || !conversationId || !message) return;
+        socket.to(convRoom(conversationId)).emit("message:new", { conversationId, message });
         const senderClerkId = socket.data.clerkUserId;
-        for (const clerkId of participantIds) {
-          io?.to(userRoom(clerkId)).emit("message:new", { conversationId, message });
-          if (clerkId !== senderClerkId) {
-            const token = pushTokens.get(clerkId);
-            if (token) {
-              const body = message.text ? message.text.slice(0, 100)
-                : message.image_url ? "📷 Photo"
-                : message.file_name ? `📎 ${message.file_name}`
-                : message.file_url?.includes("audio") ? "🎤 Voice message"
-                : "New message";
-              sendExpoPush({ token, title: senderName || "New message", body, data: { conversationId } });
+        let replyTargetId: string | null = null;
+        if (message.reply_to_message_id) {
+          const { data: parent } = await supabaseAdmin.from("messages").select("sender_clerk_id").eq("id", message.reply_to_message_id).maybeSingle();
+          replyTargetId = parent?.sender_clerk_id || null;
+          if (replyTargetId && replyTargetId !== senderClerkId) {
+            const payload = { conversationId, message, parentMessageId: message.reply_to_message_id };
+            io?.to(userRoom(replyTargetId)).emit("comment:reply", payload);
+            const token = pushTokens.get(replyTargetId);
+            if (token) void sendExpoPush({ token, title: senderName || "New reply", body: message.text ? message.text.slice(0, 100) : "Someone replied to your comment", data: { type: "comment_reply", conversationId, messageId: message.id, parentMessageId: message.reply_to_message_id } });
+          }
+        }
+        if (Array.isArray(participantIds)) {
+          for (const clerkId of participantIds) {
+            io?.to(userRoom(clerkId)).emit("message:new", { conversationId, message });
+            if (clerkId !== senderClerkId && (!message.reply_to_message_id || clerkId !== replyTargetId)) {
+              const token = pushTokens.get(clerkId);
+              if (token) {
+                const body = message.text ? message.text.slice(0, 100)
+                  : message.image_url ? "📷 Photo"
+                  : message.file_name ? `📎 ${message.file_name}`
+                  : message.file_url?.includes("audio") ? "🎤 Voice message"
+                  : "New message";
+                void sendExpoPush({ token, title: senderName || "New message", body, data: { conversationId } });
+              }
             }
           }
         }
-      }
-    }));
+      } catch (error) { console.error("[socket.io] message notification failed:", error); }
+    });
 
     socket.on("message:edit", safe(({ conversationId, messageId, newText, editedAt }) => {
       socket.to(convRoom(conversationId)).emit("message:edited", { conversationId, messageId, newText, editedAt });
