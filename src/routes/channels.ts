@@ -29,10 +29,12 @@ async function assertChannelAdmin(clerkUserId: string, channelId: string) {
 }
 
 async function grantChannelReadAccess(clerkUserId: string, channel: { id: string; conversation_id?: string | null }, role: "member" | "subscriber") {
-  const { error } = await supabaseAdmin.from("channel_members").upsert({ channel_id: channel.id, clerk_user_id: clerkUserId, role }, { onConflict: "channel_id,clerk_user_id" });
+  const { data: existing } = await supabaseAdmin.from("channel_members").select("role").eq("channel_id", channel.id).eq("clerk_user_id", clerkUserId).maybeSingle();
+  const effectiveRole = existing?.role === "admin" ? "admin" : role;
+  const { error } = await supabaseAdmin.from("channel_members").upsert({ channel_id: channel.id, clerk_user_id: clerkUserId, role: effectiveRole }, { onConflict: "channel_id,clerk_user_id" });
   if (error) throw new Error(`Failed to follow channel: ${error.message}`);
   if (channel.conversation_id) {
-    const { error: conversationError } = await supabaseAdmin.from("conversation_members").upsert({ conversation_id: channel.conversation_id, clerk_user_id: clerkUserId }, { onConflict: "conversation_id,clerk_user_id" });
+    const { error: conversationError } = await supabaseAdmin.from("conversation_members").upsert({ conversation_id: channel.conversation_id, clerk_user_id: clerkUserId, role: effectiveRole === "admin" ? "admin" : "member" }, { onConflict: "conversation_id,clerk_user_id" });
     if (conversationError) throw new Error(`Failed to grant channel read access: ${conversationError.message}`);
   }
 }
@@ -58,9 +60,11 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
     { onConflict: "channel_id,clerk_user_id" },
   );
   if (memberError) throw new Error(`Failed to add channel members: ${memberError.message}`);
-  for (const clerkId of members) {
-    await supabaseAdmin.from("conversation_members").upsert({ conversation_id: conv.id, clerk_user_id: clerkId }, { onConflict: "conversation_id,clerk_user_id" });
-  }
+  const { error: conversationMemberError } = await supabaseAdmin.from("conversation_members").upsert(
+    members.map((clerkId) => ({ conversation_id: conv.id, clerk_user_id: clerkId, role: clerkId === data.clerkUserId ? "admin" : "member" })),
+    { onConflict: "conversation_id,clerk_user_id" },
+  );
+  if (conversationMemberError) throw new Error(`Failed to add channel conversation members: ${conversationMemberError.message}`);
 
   return { ...channel, conversation: conv };
 }));
