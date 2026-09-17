@@ -350,6 +350,40 @@ channelsRouter.post("/get-channel-feed", requireAuth, (req, res) => rp(res, asyn
   return (messages ?? []).reverse();
 }));
 
+// ── Channel post views ───────────────────────────────────────────────────────
+// A view is counted once per authenticated channel member and post. The
+// existing message_read_receipts table provides the durable unique key.
+channelsRouter.post("/record-channel-post-views", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), messageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: channel } = await supabaseAdmin.from("channels").select("conversation_id").eq("id", data.channelId).maybeSingle();
+  if (!channel?.conversation_id) throw new Error("Channel not found");
+  const { data: posts, error: postsError } = await supabaseAdmin.from("messages").select("id").eq("conversation_id", channel.conversation_id).in("id", data.messageIds);
+  if (postsError) throw new Error(`Failed to validate channel posts: ${postsError.message}`);
+  const validIds = (posts || []).map((post: any) => post.id);
+  if (validIds.length) {
+    const { error } = await supabaseAdmin.from("message_read_receipts").upsert(validIds.map((messageId) => ({ message_id: messageId, clerk_user_id: data.clerkUserId })), { onConflict: "message_id,clerk_user_id" });
+    if (error) throw new Error(`Failed to record channel post views: ${error.message}`);
+  }
+  return { success: true, recorded: validIds.length };
+}));
+
+channelsRouter.post("/get-channel-post-view-counts", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), messageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: channel } = await supabaseAdmin.from("channels").select("conversation_id").eq("id", data.channelId).maybeSingle();
+  if (!channel?.conversation_id) throw new Error("Channel not found");
+  const { data: posts, error: postsError } = await supabaseAdmin.from("messages").select("id").eq("conversation_id", channel.conversation_id).in("id", data.messageIds);
+  if (postsError) throw new Error(`Failed to validate channel posts: ${postsError.message}`);
+  const validIds = (posts || []).map((post: any) => post.id);
+  const counts: Record<string, number> = Object.fromEntries(validIds.map((messageId) => [messageId, 0]));
+  if (!validIds.length) return { counts };
+  const { data: receipts, error } = await supabaseAdmin.from("message_read_receipts").select("message_id").in("message_id", validIds);
+  if (error) throw new Error(`Failed to load channel post views: ${error.message}`);
+  for (const receipt of receipts || []) counts[receipt.message_id] = (counts[receipt.message_id] || 0) + 1;
+  return { counts };
+}));
+
 
 channelsRouter.post("/request-channel-join", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), message: z.string().max(500).optional() }).parse(req.body);
