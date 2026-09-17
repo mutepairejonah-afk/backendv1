@@ -264,6 +264,9 @@ channelsRouter.post("/get-channel-info", requireAuth, (req, res) => rp(res, asyn
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
   if (!channel) throw new Error("Channel not found");
   const membership = await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: commentsLink, error: commentsLinkError } = await supabaseAdmin.from("channel_comments_links").select("conversation_id").eq("channel_id", data.channelId).maybeSingle();
+  if (commentsLinkError) throw new Error(`Failed to load channel comments group: ${commentsLinkError.message}`);
+  const commentsGroupId = commentsLink?.conversation_id || null;
 
   // Broadcast-channel subscriber anonymity: subscribers must not be able to
   // see who else follows the channel. Only channel admins get the roster;
@@ -271,13 +274,13 @@ channelsRouter.post("/get-channel-info", requireAuth, (req, res) => rp(res, asyn
   const isChannelAdmin = membership.role === "admin";
   if (channel.is_broadcast && !isChannelAdmin) {
     const { count } = await supabaseAdmin.from("channel_members").select("id", { count: "exact", head: true }).eq("channel_id", data.channelId);
-    return { ...channel, subscriberCount: count || 0, members: [] };
+    return { ...channel, commentsGroupId, subscriberCount: count || 0, members: [] };
   }
 
   const { data: members } = await supabaseAdmin.from("channel_members").select("clerk_user_id, role, joined_at").eq("channel_id", data.channelId);
   const ids = members?.map((m: any) => m.clerk_user_id) || [];
   const { data: profiles } = await supabaseAdmin.from("profiles").select("clerk_user_id, display_name, avatar_url, username, verified, is_admin, subscription_tier").in("clerk_user_id", ids.length ? ids : ["__none__"]);
-  return { ...channel, members: (members || []).map((m: any) => ({ ...m, profile: profiles?.find((p: any) => p.clerk_user_id === m.clerk_user_id) || null })) };
+  return { ...channel, commentsGroupId, members: (members || []).map((m: any) => ({ ...m, profile: profiles?.find((p: any) => p.clerk_user_id === m.clerk_user_id) || null })) };
 }));
 
 // ── Mark channel read ─────────────────────────────────────────────────────────

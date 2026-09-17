@@ -7,7 +7,7 @@ import { getIO, emitMembershipUpdate, emitRoleChangeEvent, emitPinUpdateEvent, e
 import { isBackendAdmin } from "../lib/admin.js";
 
 export const operationsRouter = Router();
-const rp = (res: any, fn: () => Promise<any>) => fn().then((value) => res.json(value)).catch((err: any) => res.status(err?.name === "ZodError" ? 400 : 500).json({ error: err?.message || "Internal server error" }));
+const rp = (res: any, fn: () => Promise<any>) => fn().then((value) => res.json(value)).catch((err: any) => { console.error("[operations] request failed", err); return res.status(err?.name === "ZodError" ? 400 : 500).json({ error: err?.message || "Internal server error" }); });
 const str = z.string().min(1).max(255);
 const id = z.string().uuid();
 const body = (shape: Record<string, z.ZodTypeAny>): z.ZodType<any> => z.object({ clerkUserId: str, ...shape });
@@ -69,6 +69,7 @@ route("incrementPostView", async (d) => { const x = body({ channelId: id, messag
 route("getPostViewCount", async (d) => { const x = body({ channelId: id, messageId: id }).parse(d); await cm(x.clerkUserId, x.channelId); const { data, error } = await supabaseAdmin.from("messages").select("view_count").eq("id", x.messageId).single(); if (error) throw new Error(error.message); return { viewCount: data.view_count || 0 }; });
 route("linkCommentsGroup", async (d) => { const x = body({ channelId: id, groupId: id }).parse(d); await ca(x.clerkUserId, x.channelId); await ga(x.clerkUserId, x.groupId); const { error } = await supabaseAdmin.from("channel_comments_links").upsert({ channel_id: x.channelId, conversation_id: x.groupId }, { onConflict: "channel_id" }); if (error) throw new Error(error.message); return { success: true }; });
 route("unlinkCommentsGroup", async (d) => { const x = body({ channelId: id }).parse(d); await ca(x.clerkUserId, x.channelId); const { error } = await supabaseAdmin.from("channel_comments_links").delete().eq("channel_id", x.channelId); if (error) throw new Error(error.message); return { success: true }; });
+route("getCommentsGroup", async (d) => { const x = body({ channelId: id }).parse(d); await cm(x.clerkUserId, x.channelId); const { data, error } = await supabaseAdmin.from("channel_comments_links").select("conversation_id").eq("channel_id", x.channelId).maybeSingle(); if (error) throw new Error(error.message); return { conversationId: data?.conversation_id || null }; });
 route("deleteAllMessagesFromUser", async (d) => { const x = body({ groupId: id, memberClerkId: str }).parse(d); await ga(x.clerkUserId, x.groupId); const { data: msgs } = await supabaseAdmin.from("messages").select("id").eq("conversation_id", x.groupId).eq("sender_clerk_id", x.memberClerkId); const ids = (msgs || []).map((m: any) => m.id); if (ids.length) { const { error } = await supabaseAdmin.from("messages").delete().in("id", ids); if (error) throw new Error(error.message); } return { success: true, deletedCount: ids.length }; });
 route("pinMessage", async (d) => pin(d, true));
 route("unpinMessage", async (d) => pin(d, false));
