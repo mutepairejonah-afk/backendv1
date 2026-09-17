@@ -28,6 +28,12 @@ async function assertChannelAdmin(clerkUserId: string, channelId: string) {
   return m;
 }
 
+async function assertChannelOwner(clerkUserId: string, channelId: string) {
+  const { data: channel } = await supabaseAdmin.from("channels").select("created_by").eq("id", channelId).maybeSingle();
+  if (!channel || channel.created_by !== clerkUserId) throw new Error("Only the channel owner can manage administrators");
+  return channel;
+}
+
 async function grantChannelReadAccess(clerkUserId: string, channel: { id: string; conversation_id?: string | null }, role: "member" | "subscriber") {
   const { data: existing } = await supabaseAdmin.from("channel_members").select("role").eq("channel_id", channel.id).eq("clerk_user_id", clerkUserId).maybeSingle();
   const effectiveRole = existing?.role === "admin" ? "admin" : role;
@@ -71,11 +77,12 @@ channelsRouter.post("/create-channel", requireAuth, (req, res) => rp(res, async 
 
 // ── Update channel settings (broadcast mode, discoverability, topic) ────────
 channelsRouter.post("/update-channel-settings", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), topic: z.string().max(500).optional(), username: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/).optional(), description: z.string().max(2048).optional(), commentsEnabled: z.boolean().optional(), signaturesEnabled: z.boolean().optional(), defaultReactions: z.array(z.string().max(12)).max(20).optional(), permissions: z.record(z.boolean()).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), slowModeSeconds: z.number().int().min(0).max(86400).optional(), inviteExpiresAt: z.string().datetime().nullable().optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), name: z.string().trim().min(1).max(80).optional(), topic: z.string().max(500).optional(), username: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/).optional(), description: z.string().max(2048).optional(), commentsEnabled: z.boolean().optional(), signaturesEnabled: z.boolean().optional(), defaultReactions: z.array(z.string().max(12)).max(20).optional(), permissions: z.record(z.boolean()).optional(), isBroadcast: z.boolean().optional(), isDiscoverable: z.boolean().optional(), slowModeSeconds: z.number().int().min(0).max(86400).optional(), inviteExpiresAt: z.string().datetime().nullable().optional(), settings: z.record(z.unknown()).optional() }).parse(req.body);
   const { data: channel } = await supabaseAdmin.from("channels").select("*").eq("id", data.channelId).single();
   if (!channel) throw new Error("Channel not found");
   await assertChannelAdmin(data.clerkUserId, data.channelId);
   const patch: Record<string, unknown> = {};
+  if (data.name !== undefined) patch.name = data.name;
   if (data.topic !== undefined) patch.topic = data.topic;
   if (data.username !== undefined) patch.username = data.username.toLowerCase();
   if (data.description !== undefined) patch.description = data.description;
@@ -90,6 +97,7 @@ channelsRouter.post("/update-channel-settings", requireAuth, (req, res) => rp(re
   if (data.settings !== undefined) patch.settings = data.settings;
   const { data: updated, error } = await supabaseAdmin.from("channels").update(patch).eq("id", data.channelId).select().single();
   if (error) throw new Error(`Failed to update channel: ${error.message}`);
+  if (data.name !== undefined && channel.conversation_id) await supabaseAdmin.from("conversations").update({ name: data.name, updated_at: new Date().toISOString() }).eq("id", channel.conversation_id);
   return updated;
 }));
 
@@ -233,7 +241,7 @@ channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, as
 
 channelsRouter.post("/set-channel-admin", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), targetClerkId: z.string().min(1).max(255), isAdmin: z.boolean() }).parse(req.body);
-  await assertChannelAdmin(data.clerkUserId, data.channelId);
+  await assertChannelOwner(data.clerkUserId, data.channelId);
   if (data.targetClerkId === data.clerkUserId && !data.isAdmin) throw new Error("The channel must keep an administrator");
   const { error } = await supabaseAdmin.from("channel_members").update({ role: data.isAdmin ? "admin" : "member" }).eq("channel_id", data.channelId).eq("clerk_user_id", data.targetClerkId);
   if (error) throw new Error(`Failed to update channel admin: ${error.message}`);
