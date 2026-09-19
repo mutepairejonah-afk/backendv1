@@ -36,8 +36,10 @@ CREATE POLICY message_viewers_owner_select ON public.message_viewers FOR SELECT 
 DROP POLICY IF EXISTS order_items_authenticated_select ON public.order_items;
 CREATE POLICY order_items_authenticated_select ON public.order_items FOR SELECT USING (auth.role() = 'authenticated');
 
-DROP POLICY IF EXISTS scim_provisioning_log_admin_select ON public.scim_provisioning_log;
-CREATE POLICY scim_provisioning_log_admin_select ON public.scim_provisioning_log FOR SELECT USING (EXISTS (SELECT 1 FROM public.organization_members om WHERE om.organization_id = scim_provisioning_log.organization_id AND om.clerk_user_id = (auth.jwt() ->> 'sub') AND om.role IN ('owner', 'admin')));
+-- Note: scim_provisioning_log / organization_members no longer exist -- the
+-- organization/workspace layer was intentionally dropped by
+-- 20260905000000_remove_workspace_make_telegram.sql. A leftover policy for
+-- scim_provisioning_log_admin_select was removed from here for that reason.
 
 DROP POLICY IF EXISTS smart_space_rules_owner_select ON public.smart_space_rules;
 CREATE POLICY smart_space_rules_owner_select ON public.smart_space_rules FOR SELECT USING (EXISTS (SELECT 1 FROM public.smart_spaces ss WHERE ss.id = smart_space_rules.space_id AND ss.owner_clerk_user_id = (auth.jwt() ->> 'sub')));

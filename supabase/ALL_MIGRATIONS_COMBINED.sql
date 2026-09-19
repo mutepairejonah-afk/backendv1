@@ -1,12 +1,19 @@
 -- =============================================================
 -- Combined Supabase migrations for reach backend (backendv1)
--- Generated 2026-09-19 -- concatenation of every file in
+-- Regenerated 2026-09-19 -- concatenation of every file in
 -- supabase/migrations/, in chronological order.
 --
 -- HOW TO RUN: paste this whole file into the Supabase SQL Editor
 -- and run it once. Most statements are idempotent (if not exists /
 -- if exists / on conflict), so it is safe even if some of these
 -- migrations were already partially applied.
+--
+-- FIXED in this version: removed a leftover policy in
+-- 20260917000000_repair_channel_roles_and_rls_policies.sql that
+-- referenced scim_provisioning_log / organization_members --
+-- tables an earlier migration (20260905, remove-workspace) already
+-- intentionally dropped. That caused: column "organization_id"
+-- does not exist (42703).
 --
 -- IF A STATEMENT ERRORS (e.g. 'already exists'): that piece was
 -- already applied previously. Note which file/line failed, remove
@@ -1278,8 +1285,10 @@ CREATE POLICY message_viewers_owner_select ON public.message_viewers FOR SELECT 
 DROP POLICY IF EXISTS order_items_authenticated_select ON public.order_items;
 CREATE POLICY order_items_authenticated_select ON public.order_items FOR SELECT USING (auth.role() = 'authenticated');
 
-DROP POLICY IF EXISTS scim_provisioning_log_admin_select ON public.scim_provisioning_log;
-CREATE POLICY scim_provisioning_log_admin_select ON public.scim_provisioning_log FOR SELECT USING (EXISTS (SELECT 1 FROM public.organization_members om WHERE om.organization_id = scim_provisioning_log.organization_id AND om.clerk_user_id = (auth.jwt() ->> 'sub') AND om.role IN ('owner', 'admin')));
+-- Note: scim_provisioning_log / organization_members no longer exist -- the
+-- organization/workspace layer was intentionally dropped by
+-- 20260905000000_remove_workspace_make_telegram.sql. A leftover policy for
+-- scim_provisioning_log_admin_select was removed from here for that reason.
 
 DROP POLICY IF EXISTS smart_space_rules_owner_select ON public.smart_space_rules;
 CREATE POLICY smart_space_rules_owner_select ON public.smart_space_rules FOR SELECT USING (EXISTS (SELECT 1 FROM public.smart_spaces ss WHERE ss.id = smart_space_rules.space_id AND ss.owner_clerk_user_id = (auth.jwt() ->> 'sub')));
