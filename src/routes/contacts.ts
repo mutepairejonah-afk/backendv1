@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
-import { notifyContactRequest } from "../socket.js";
+import { emitContactsUpdated, notifyContactRequest } from "../socket.js";
 
 export const contactsRouter = Router();
 
@@ -53,6 +53,7 @@ contactsRouter.post("/remove-contact", requireAuth, (req, res) => rp(res, async 
   const data = z.object({ clerkUserId: z.string().min(1).max(255), contactClerkId: z.string().min(1).max(255) }).parse(req.body);
   await supabaseAdmin.from("contacts").delete().eq("user_clerk_id", data.clerkUserId).eq("contact_clerk_id", data.contactClerkId);
   await supabaseAdmin.from("contacts").delete().eq("user_clerk_id", data.contactClerkId).eq("contact_clerk_id", data.clerkUserId);
+  emitContactsUpdated([data.clerkUserId, data.contactClerkId]);
   return { success: true };
 }));
 
@@ -86,6 +87,7 @@ contactsRouter.post("/accept-contact-request", requireAuth, (req, res) => rp(res
   if (!incoming) throw new Error("No pending request from this user");
   await supabaseAdmin.from("contacts").update({ status: "accepted" }).eq("user_clerk_id", data.clerkUserId).eq("contact_clerk_id", data.requesterClerkId);
   await supabaseAdmin.from("contacts").update({ status: "accepted" }).eq("user_clerk_id", data.requesterClerkId).eq("contact_clerk_id", data.clerkUserId);
+  emitContactsUpdated([data.clerkUserId, data.requesterClerkId]);
   return { success: true };
 }));
 
@@ -93,6 +95,7 @@ contactsRouter.post("/reject-contact-request", requireAuth, (req, res) => rp(res
   const data = z.object({ clerkUserId: z.string().min(1).max(255), requesterClerkId: z.string().min(1).max(255) }).parse(req.body);
   await supabaseAdmin.from("contacts").delete().eq("user_clerk_id", data.clerkUserId).eq("contact_clerk_id", data.requesterClerkId);
   await supabaseAdmin.from("contacts").delete().eq("user_clerk_id", data.requesterClerkId).eq("contact_clerk_id", data.clerkUserId);
+  emitContactsUpdated([data.clerkUserId, data.requesterClerkId]);
   return { success: true };
 }));
 

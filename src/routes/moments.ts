@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { emitMomentCommented, emitMomentCreated, emitMomentDeleted, emitMomentLiked } from "../socket.js";
 
 export const momentsRouter = Router();
 
@@ -44,14 +45,16 @@ momentsRouter.post("/create-moment", requireAuth, (req, res) => rp(res, async ()
     error = legacy.error;
   }
   if (error) throw new Error(`Failed to create moment: ${error.message}`);
+  emitMomentCreated(moment.id);
   return moment;
 }));
 
 momentsRouter.post("/toggle-moment-like", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), momentId: z.string().uuid() }).parse(req.body);
   const { data: existing } = await supabaseAdmin.from("moment_likes").select("id").eq("moment_id", data.momentId).eq("clerk_user_id", data.clerkUserId).single();
-  if (existing) { await supabaseAdmin.from("moment_likes").delete().eq("id", existing.id); return { liked: false }; }
+  if (existing) { await supabaseAdmin.from("moment_likes").delete().eq("id", existing.id); emitMomentLiked(data.momentId, data.clerkUserId, false); return { liked: false }; }
   await supabaseAdmin.from("moment_likes").insert({ moment_id: data.momentId, clerk_user_id: data.clerkUserId });
+  emitMomentLiked(data.momentId, data.clerkUserId, true);
   return { liked: true };
 }));
 
@@ -69,6 +72,7 @@ momentsRouter.post("/add-moment-comment", requireAuth, (req, res) => rp(res, asy
   const data = z.object({ clerkUserId: z.string().min(1).max(255), momentId: z.string().uuid(), text: z.string().min(1).max(2000) }).parse(req.body);
   const { data: comment, error } = await supabaseAdmin.from("moment_comments").insert({ moment_id: data.momentId, clerk_user_id: data.clerkUserId, text: data.text }).select().single();
   if (error) throw new Error(`Failed to add comment: ${error.message}`);
+  emitMomentCommented(data.momentId);
   return comment;
 }));
 
@@ -79,6 +83,7 @@ momentsRouter.post("/delete-moment", requireAuth, (req, res) => rp(res, async ()
   await supabaseAdmin.from("moment_comments").delete().eq("moment_id", data.momentId);
   await supabaseAdmin.from("moment_likes").delete().eq("moment_id", data.momentId);
   await supabaseAdmin.from("moments").delete().eq("id", data.momentId);
+  emitMomentDeleted(data.momentId);
   return { success: true };
 }));
 
