@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { assertCanPostInConversation } from "../lib/permissions.js";
+import { emitNotificationsUpdated } from "../socket.js";
 
 export const messagesRouter = Router();
 
@@ -119,6 +120,7 @@ messagesRouter.post("/mark-messages-read", requireAuth, (req, res) => rp(res, as
   const data = z.object({ clerkUserId: z.string().min(1).max(255), messageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
   const rows = data.messageIds.map((msgId) => ({ message_id: msgId, clerk_user_id: data.clerkUserId }));
   await supabaseAdmin.from("message_read_receipts").upsert(rows, { onConflict: "message_id,clerk_user_id" });
+  emitNotificationsUpdated(data.clerkUserId);
   return { success: true };
 }));
 

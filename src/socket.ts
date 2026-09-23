@@ -70,6 +70,7 @@ type ClientToServer = {
 
 type ServerToClient = {
   "contact:request": (data: { requesterClerkId: string; requesterName?: string }) => void;
+  "notifications:updated": (data: { clerkUserId: string }) => void;
   "contacts:updated": (data: { clerkUserIds: string[] }) => void;
   "moment:created": (data: { momentId: string }) => void;
   "moment:deleted": (data: { momentId: string }) => void;
@@ -124,6 +125,11 @@ export function emitContactsUpdated(clerkUserIds: string[]) {
   for (const clerkUserId of new Set(clerkUserIds)) {
     safeEmit(() => io!.to(userRoom(clerkUserId)).emit("contacts:updated", payload));
   }
+}
+
+export function emitNotificationsUpdated(clerkUserId: string) {
+  if (!io || !clerkUserId) return;
+  safeEmit(() => io!.to(userRoom(clerkUserId)).emit("notifications:updated", { clerkUserId }));
 }
 
 export function emitMomentCreated(momentId: string) {

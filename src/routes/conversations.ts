@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { emitNotificationsUpdated } from "../socket.js";
 
 export const conversationsRouter = Router();
 
@@ -91,6 +92,7 @@ conversationsRouter.post("/mark-conversation-read", requireAuth, (req, res) => r
   if (!membership) throw new Error("You are not a member of this conversation");
   const { error } = await supabaseAdmin.from("conversation_members").update({ unread_count: 0 }).eq("id", membership.id);
   if (error) throw new Error(`Failed to mark conversation read: ${error.message}`);
+  emitNotificationsUpdated(data.clerkUserId);
   return { success: true };
 }));
 
