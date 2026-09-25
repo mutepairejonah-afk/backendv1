@@ -3,6 +3,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { assertCanPostInConversation } from "../lib/permissions.js";
+import { emitNotificationsUpdated } from "../socket.js";
 
 export const messagesRouter = Router();
 
@@ -119,6 +120,7 @@ messagesRouter.post("/mark-messages-read", requireAuth, (req, res) => rp(res, as
   const data = z.object({ clerkUserId: z.string().min(1).max(255), messageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
   const rows = data.messageIds.map((msgId) => ({ message_id: msgId, clerk_user_id: data.clerkUserId }));
   await supabaseAdmin.from("message_read_receipts").upsert(rows, { onConflict: "message_id,clerk_user_id" });
+  emitNotificationsUpdated(data.clerkUserId);
   return { success: true };
 }));
 
@@ -217,6 +219,7 @@ messagesRouter.post("/vote-poll", requireAuth, (req, res) => rp(res, async () =>
 // Scheduled messages
 messagesRouter.post("/schedule-message", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), conversationId: z.string().uuid(), text: z.string().min(1).max(4000), scheduledFor: z.string().datetime() }).parse(req.body);
+  await assertCanPostInConversation(data.clerkUserId, data.conversationId);
   const { data: row, error } = await supabaseAdmin.from("scheduled_messages").insert({ clerk_user_id: data.clerkUserId, conversation_id: data.conversationId, text: data.text, scheduled_for: data.scheduledFor }).select().single();
   if (error) throw new Error(`Failed to schedule message: ${error.message}`);
   return row;

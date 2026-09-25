@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { emitMomentCreated } from "../socket.js";
 import { assertCanPostInConversation } from "../lib/permissions.js";
 
 export const mediaRouter = Router();
@@ -114,6 +115,7 @@ mediaRouter.post("/upload-video-status", requireAuth, (req, res) => rp(res, asyn
   const { data: urlData } = supabaseAdmin.storage.from("moment-media").getPublicUrl(storagePath);
   const { data: moment, error } = await supabaseAdmin.from("moments").insert({ clerk_user_id: data.clerkUserId, text: data.text || null, video_url: urlData.publicUrl, thumbnail_url: data.thumbnailUrl || null, mime_type: data.contentType, duration_seconds: data.durationSeconds ?? null, expires_at: new Date(Date.now() + 24 * 3600000).toISOString() }).select().single();
   if (error) throw new Error(`Failed to save video status: ${error.message}`);
+  emitMomentCreated(moment.id);
   return moment;
 }));
 

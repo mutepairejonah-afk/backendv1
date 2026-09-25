@@ -70,6 +70,12 @@ type ClientToServer = {
 
 type ServerToClient = {
   "contact:request": (data: { requesterClerkId: string; requesterName?: string }) => void;
+  "notifications:updated": (data: { clerkUserId: string }) => void;
+  "contacts:updated": (data: { clerkUserIds: string[] }) => void;
+  "moment:created": (data: { momentId: string }) => void;
+  "moment:deleted": (data: { momentId: string }) => void;
+  "moment:liked": (data: { momentId: string; clerkUserId: string; liked: boolean }) => void;
+  "moment:commented": (data: { momentId: string }) => void;
   "message:new": (data: { conversationId: string; message: any }) => void;
   "comment:reply": (data: { conversationId: string; message: any; parentMessageId: string }) => void;
   "message:edited": (data: { conversationId: string; messageId: string; newText: string; editedAt: string }) => void;
@@ -111,6 +117,35 @@ export function notifyContactRequest(toClerkId: string, requesterClerkId: string
   safeEmit(() => io!.to(userRoom(toClerkId)).emit("contact:request", payload));
   const token = pushTokens.get(toClerkId);
   if (token) void sendExpoPush({ token, title: "New friend request", body: `${requesterName || "Someone"} wants to connect with you`, data: { type: "contact_request", requesterClerkId } });
+}
+
+export function emitContactsUpdated(clerkUserIds: string[]) {
+  if (!io || !clerkUserIds.length) return;
+  const payload = { clerkUserIds };
+  for (const clerkUserId of new Set(clerkUserIds)) {
+    safeEmit(() => io!.to(userRoom(clerkUserId)).emit("contacts:updated", payload));
+  }
+}
+
+export function emitNotificationsUpdated(clerkUserId: string) {
+  if (!io || !clerkUserId) return;
+  safeEmit(() => io!.to(userRoom(clerkUserId)).emit("notifications:updated", { clerkUserId }));
+}
+
+export function emitMomentCreated(momentId: string) {
+  safeEmit(() => io?.emit("moment:created", { momentId }));
+}
+
+export function emitMomentDeleted(momentId: string) {
+  safeEmit(() => io?.emit("moment:deleted", { momentId }));
+}
+
+export function emitMomentLiked(momentId: string, clerkUserId: string, liked: boolean) {
+  safeEmit(() => io?.emit("moment:liked", { momentId, clerkUserId, liked }));
+}
+
+export function emitMomentCommented(momentId: string) {
+  safeEmit(() => io?.emit("moment:commented", { momentId }));
 }
 
 const IO_OPTS = {

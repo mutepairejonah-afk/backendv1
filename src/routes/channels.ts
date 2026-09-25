@@ -235,6 +235,22 @@ channelsRouter.post("/send-channel-post", requireAuth, (req, res) => rp(res, asy
   return message;
 }));
 
+// Comments are member replies, not channel publications. Keep them on the
+// channel conversation so the existing nested-thread UI can load them, while
+// bypassing the admin-only post permission used by send-message/media routes.
+channelsRouter.post("/add-channel-comment", requireAuth, (req, res) => rp(res, async () => {
+  const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid(), text: z.string().trim().min(1).max(2000), replyToMessageId: z.string().uuid() }).parse(req.body);
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id, archived_at").eq("id", data.channelId).maybeSingle();
+  if (!channel || !channel.conversation_id || channel.archived_at) throw new Error("Channel is unavailable");
+  await assertChannelMember(data.clerkUserId, data.channelId);
+  const { data: parent } = await supabaseAdmin.from("messages").select("id, conversation_id").eq("id", data.replyToMessageId).eq("conversation_id", channel.conversation_id).maybeSingle();
+  if (!parent) throw new Error("The post or comment no longer exists");
+  const { data: comment, error } = await supabaseAdmin.from("messages").insert({ conversation_id: channel.conversation_id, sender_clerk_id: data.clerkUserId, text: data.text, reply_to_message_id: data.replyToMessageId }).select().single();
+  if (error) throw new Error(`Failed to add channel comment: ${error.message}`);
+  await supabaseAdmin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", channel.conversation_id);
+  return comment;
+}));
+
 // ── Channel info + members list ──────────────────────────────────────────────
 channelsRouter.post("/get-channel-admins", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
@@ -313,15 +329,16 @@ channelsRouter.post("/mark-channel-read", requireAuth, (req, res) => rp(res, asy
 // ── Public discovery and Telegram-style follow subscriptions ─────────────────
 channelsRouter.post("/discover-channels", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), query: z.string().trim().max(100).optional(), limit: z.number().int().min(1).max(50).optional(), cursor: z.string().datetime().optional() }).parse(req.body);
-  let query = supabaseAdmin.from("channels").select("id, conversation_id, name, public_slug, topic, is_broadcast, member_count, created_at").eq("is_private", false).eq("is_discoverable", true).is("archived_at", null).order("created_at", { ascending: false }).limit(data.limit ?? 25);
+  const { data: memberships, error: membershipError } = await supabaseAdmin.from("channel_members").select("channel_id, role").eq("clerk_user_id", data.clerkUserId);
+  if (membershipError) throw new Error(`Failed to load channel memberships: ${membershipError.message}`);
+  const excludedIds = [...new Set((memberships || []).map((membership: any) => membership.channel_id))];
+  let query = supabaseAdmin.from("channels").select("id, conversation_id, name, public_slug, topic, is_broadcast, member_count, created_at, created_by").eq("is_private", false).eq("is_discoverable", true).is("archived_at", null).order("created_at", { ascending: false }).limit(data.limit ?? 25);
+  if (excludedIds.length) query = query.not("id", "in", `(${excludedIds.join(",")})`);
   if (data.query) query = query.ilike("name", `%${data.query}%`);
   if (data.cursor) query = query.lt("created_at", data.cursor);
   const { data: channels, error } = await query;
   if (error) throw new Error(`Failed to discover channels: ${error.message}`);
-  const ids = (channels ?? []).map((channel: any) => channel.id);
-  const { data: follows } = ids.length ? await supabaseAdmin.from("channel_members").select("channel_id").eq("clerk_user_id", data.clerkUserId).eq("role", "subscriber").in("channel_id", ids) : { data: [] };
-  const followed = new Set((follows ?? []).map((row: any) => row.channel_id));
-  return (channels ?? []).map((channel: any) => ({ ...channel, isFollowing: followed.has(channel.id) }));
+  return (channels ?? []).map((channel: any) => ({ ...channel, isOwner: channel.created_by === data.clerkUserId, isFollowing: false }));
 }));
 
 channelsRouter.post("/get-followed-channels", requireAuth, (req, res) => rp(res, async () => {
@@ -337,8 +354,9 @@ channelsRouter.post("/get-followed-channels", requireAuth, (req, res) => rp(res,
 
 channelsRouter.post("/follow-channel", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255), channelId: z.string().uuid() }).parse(req.body);
-  const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id, name, is_private, is_discoverable, archived_at").eq("id", data.channelId).maybeSingle();
+  const { data: channel } = await supabaseAdmin.from("channels").select("id, conversation_id, name, is_private, is_discoverable, archived_at, created_by").eq("id", data.channelId).maybeSingle();
   if (!channel || channel.archived_at || channel.is_private || !channel.is_discoverable) throw new Error("This channel is not publicly followable");
+  if (channel.created_by === data.clerkUserId) return { success: true, channelId: channel.id, following: true, owner: true };
   await grantChannelReadAccess(data.clerkUserId, channel, "subscriber");
   return { success: true, channelId: channel.id, following: true };
 }));
