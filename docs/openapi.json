@@ -132,6 +132,65 @@
         }
       }
     },
+    "/api/add-channel-comment": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Add channel comment",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "clerkAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clerkUserId": {
+                    "type": "string"
+                  },
+                  "channelId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "replyToMessageId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "clerkUserId",
+                  "channelId",
+                  "text",
+                  "replyToMessageId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/add-channel-member": {
       "post": {
         "tags": [
