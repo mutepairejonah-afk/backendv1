@@ -5457,13 +5457,13 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "clerkUserId": {
+                  "targetClerkId": {
+                    "type": "string"
+                  },
+                  "callerSuppliedClerkUserId": {
                     "type": "string"
                   }
-                },
-                "required": [
-                  "clerkUserId"
-                ]
+                }
               }
             }
           }
