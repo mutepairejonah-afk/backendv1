@@ -62,6 +62,22 @@ docker run --env-file .env -p 3001:3001 chatapp-backend
 
 The image has a non-root runtime user and a Docker health check. Docker Compose also includes coturn for self-hosted WebRTC TURN, but coturn requires a public IP/domain and firewall configuration; it is optional for ordinary chat and AI deployment.
 
+## Fly.io
+
+`fly.toml` in the repo root deploys the main web service to Fly using the existing `Dockerfile` — no separate Fly-specific Dockerfile needed.
+
+```bash
+flyctl launch --no-deploy   # first time only, or edit the `app` name in fly.toml to one you've already reserved
+flyctl secrets set CLERK_SECRET_KEY=... CLERK_WEBHOOK_SECRET=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENROUTER_API_KEY=... ALLOWED_ORIGINS=https://your-frontend.example.com
+flyctl deploy
+```
+
+Set every secret listed in [Required environment variables](#required-environment-variables) this way (anything marked `sync: false` in `render.yaml`) — `flyctl secrets set` persists them across deploys, so this is a one-time step per app, not per deploy.
+
+`min_machines_running = 1` with `auto_stop_machines = "off"` keeps exactly one machine warm at all times, rather than Fly's usual scale-to-zero. This is intentional: the backend holds long-lived Socket.IO connections for realtime messages, calls, and presence, and scale-to-zero would silently drop those connections whenever traffic dipped.
+
+**The `retention-sweep` cron job stays on Render** (see `render.yaml`) even if you move the main web service to Fly. Fly doesn't have a built-in scheduled-job service type the way Render does — running it there would mean a Fly Machine on a systemd-timer/cron trigger, which is more setup than the job is worth. Render's `cron` service type already runs it natively for about $1/month; there's no reason to migrate a job this small and this cheap. If you do want it fully off Render at some point, the equivalent on Fly is `flyctl machine run` with a scheduled trigger, or an external scheduler (e.g. GitHub Actions on a `schedule:` cron) hitting a one-off script — neither is set up here.
+
 ## Pre-deployment checks
 
 ```bash
@@ -73,4 +89,4 @@ curl https://api.example.com/health
 
 ## Supabase schema migrations
 
-Render builds the Node service but does not automatically execute Supabase SQL migrations. Before using channel creation, Moments, or Stories on an existing Supabase project, run the files in `supabase/migrations/` in timestamp order in the Supabase SQL Editor. The repair migration `20260910000000_repair_create_flows.sql` is idempotent and restores the standalone channel columns, status/story tables, media columns, and public storage buckets used by the create endpoints.
+Neither Render nor Fly automatically executes Supabase SQL migrations. Before using channel creation, Moments, or Stories on an existing Supabase project, run the files in `supabase/migrations/` in timestamp order in the Supabase SQL Editor, or paste `supabase/ALL_MIGRATIONS_COMBINED.sql` in one shot for a fresh project. The repair migration `20260910000000_repair_create_flows.sql` is idempotent and restores the standalone channel columns, status/story tables, media columns, and public storage buckets used by the create endpoints.
