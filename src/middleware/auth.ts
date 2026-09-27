@@ -27,8 +27,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       secretKey: process.env.CLERK_SECRET_KEY,
     });
     (req as AuthRequest).clerkUserId = payload.sub;
-    // Override body clerkUserId with the verified one so handlers can trust req.body.clerkUserId
+    // Override body clerkUserId with the verified one so handlers can trust
+    // req.body.clerkUserId as "the authenticated caller". Some routes (e.g.
+    // GET-profile-by-id lookups) instead use a field literally named
+    // `clerkUserId` to mean "the OTHER user I'm looking up" — for those we
+    // preserve what the client actually sent under `callerSuppliedClerkUserId`
+    // so the handler can still read it. See src/routes/profiles.ts.
     if (req.body && typeof req.body === "object") {
+      if (typeof req.body.clerkUserId === "string") {
+        req.body.callerSuppliedClerkUserId = req.body.clerkUserId;
+      }
       req.body.clerkUserId = payload.sub;
     }
     next();

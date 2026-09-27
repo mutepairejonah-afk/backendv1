@@ -67,7 +67,12 @@ paymentsRouter.post("/verify-order", requireAuth, (req, res) => reply(res, async
   const { error } = await supabaseAdmin.from("payments").update({ status: data.action, approved_by: data.clerkUserId, processed_at: new Date().toISOString(), rejection_reason: data.rejectionReason || null }).eq("id", data.paymentId).eq("status", "pending");
   if (error) throw new Error(error.message);
   if (data.action === "approved") {
-    const amountUsd = payment.currency === "USD" ? Number(payment.amount) : Number(payment.amount) / 13.5;
+    let usdToZigRate = 13.5;
+    if (payment.currency !== "USD") {
+      const { data: settings } = await supabaseAdmin.from("ecocash_settings").select("usd_to_zig_rate").eq("id", 1).maybeSingle();
+      if (settings?.usd_to_zig_rate) usdToZigRate = Number(settings.usd_to_zig_rate);
+    }
+    const amountUsd = payment.currency === "USD" ? Number(payment.amount) : Number(payment.amount) / usdToZigRate;
     await supabaseAdmin.from("profiles").update({ subscription_tier: amountUsd >= 9.99 ? "pro" : "premium" }).eq("clerk_user_id", payment.user_id);
   }
   return { success: true };
