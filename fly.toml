@@ -1,23 +1,7 @@
-# fly.toml -- reconciled from `flyctl launch`'s auto-generated scaffold
-# (app name/region below are the actual registered Fly app) plus fixes for
-# two issues the generated scaffold got wrong for this specific backend:
+# fly.toml app configuration file generated for backendv1-wp9-qa on 2026-09-27T06:11:11Z
 #
-# 1. internal_port was 8080, but this app listens on `process.env.PORT`,
-#    which defaults to 3001 (see src/index.ts) and nothing here sets PORT=8080.
-#    Fly would proxy to a port nothing is listening on and every health check
-#    would fail. Fixed by setting internal_port to 3001 to match, via an
-#    explicit PORT env var so both the app and Fly's proxy agree.
-# 2. auto_stop_machines='stop' + min_machines_running=0 (scale-to-zero) would
-#    silently drop this backend's long-lived Socket.IO connections
-#    (src/socket.ts -- realtime messages/calls/presence) whenever traffic
-#    dipped. Fixed by keeping exactly one machine always warm instead.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
-# The retention-sweep cron job stays on Render (see render.yaml and
-# DEPLOY.md) -- only this web service runs on Fly.
-#
-# Deploy: `flyctl deploy` (app already exists from the original `flyctl
-# launch` run). Secrets (anything marked `sync: false` in render.yaml) are
-# set once with `flyctl secrets set KEY=value` and persist across deploys.
 
 app = 'backendv1-wp9-qa'
 primary_region = 'ams'
@@ -25,8 +9,8 @@ primary_region = 'ams'
 [build]
 
 [env]
-  NODE_ENV = 'production'
   HOST = '0.0.0.0'
+  NODE_ENV = 'production'
   PORT = '3001'
 
 [http_service]
@@ -38,10 +22,10 @@ primary_region = 'ams'
   processes = ['app']
 
   [[http_service.checks]]
-    grace_period = '10s'
     interval = '30s'
-    method = 'GET'
     timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
     path = '/health'
 
 [[vm]]
