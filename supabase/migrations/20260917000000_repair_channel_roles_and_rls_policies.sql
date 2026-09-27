@@ -7,6 +7,16 @@ WHERE ch.conversation_id = cm.conversation_id
   AND ch.created_by = cm.clerk_user_id
   AND cm.role <> 'admin';
 
+-- ping has no CREATE TABLE anywhere in the tracked migration history (it was
+-- created manually on the live project as a trivial DB-connectivity health
+-- check). Create it defensively so this script also succeeds on a fresh
+-- database instead of failing here.
+CREATE TABLE IF NOT EXISTS public.ping (
+  id boolean PRIMARY KEY DEFAULT true,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ping_singleton CHECK (id)
+);
+
 ALTER TABLE public.ping ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS admin_audit_log_member_select ON public.admin_audit_log;
@@ -33,8 +43,16 @@ CREATE POLICY message_deletions_owner_select ON public.message_deletions FOR SEL
 DROP POLICY IF EXISTS message_viewers_owner_select ON public.message_viewers;
 CREATE POLICY message_viewers_owner_select ON public.message_viewers FOR SELECT USING (clerk_user_id = (auth.jwt() ->> 'sub'));
 
-DROP POLICY IF EXISTS order_items_authenticated_select ON public.order_items;
-CREATE POLICY order_items_authenticated_select ON public.order_items FOR SELECT USING (auth.role() = 'authenticated');
+-- order_items no longer exists (dropped by 20260905000000_remove_workspace_make_telegram.sql
+-- as part of the commerce-layer removal), so this policy would fail to create
+-- on a fresh run. Guard it so the rest of this script still applies cleanly.
+DO $$
+BEGIN
+  IF to_regclass('public.order_items') IS NOT NULL THEN
+    EXECUTE 'DROP POLICY IF EXISTS order_items_authenticated_select ON public.order_items';
+    EXECUTE 'CREATE POLICY order_items_authenticated_select ON public.order_items FOR SELECT USING (auth.role() = ''authenticated'')';
+  END IF;
+END $$;
 
 -- Note: scim_provisioning_log / organization_members no longer exist -- the
 -- organization/workspace layer was intentionally dropped by

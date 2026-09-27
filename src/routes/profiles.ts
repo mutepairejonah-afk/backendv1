@@ -81,7 +81,7 @@ profilesRouter.post("/check-username-availability", requireAuth, (req, res) => r
     username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
     clerkUserId: z.string().min(1).max(255),
   }).parse(req.body);
-  const { data: existing } = await supabaseAdmin.from("profiles").select("clerk_user_id").ilike("username", data.username).single();
+  const { data: existing } = await supabaseAdmin.from("profiles").select("clerk_user_id").ilike("username", data.username).maybeSingle();
   if (!existing) return { available: true };
   if (existing.clerk_user_id === data.clerkUserId) return { available: true };
   return { available: false };
@@ -92,7 +92,7 @@ profilesRouter.post("/claim-username", requireAuth, (req, res) => rp(res, async 
     clerkUserId: z.string().min(1).max(255),
     username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
   }).parse(req.body);
-  const { data: existing } = await supabaseAdmin.from("profiles").select("clerk_user_id").ilike("username", data.username).single();
+  const { data: existing } = await supabaseAdmin.from("profiles").select("clerk_user_id").ilike("username", data.username).maybeSingle();
   if (existing && existing.clerk_user_id !== data.clerkUserId) throw new Error("Username is already taken");
   const { data: profile, error } = await supabaseAdmin.from("profiles").update({ username: data.username.toLowerCase() }).eq("clerk_user_id", data.clerkUserId).select().single();
   if (error) throw new Error(`Failed to claim username: ${error.message}`);
@@ -101,13 +101,26 @@ profilesRouter.post("/claim-username", requireAuth, (req, res) => rp(res, async 
 
 profilesRouter.post("/get-profile-by-username", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ username: z.string().min(1).max(30) }).parse(req.body);
-  const { data: profile } = await supabaseAdmin.from("profiles").select("*").ilike("username", data.username).single();
+  const { data: profile } = await supabaseAdmin.from("profiles").select("*").ilike("username", data.username).maybeSingle();
   return profile || null;
 }));
 
 profilesRouter.post("/get-profile-by-clerk-id", requireAuth, (req, res) => rp(res, async () => {
-  const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
-  const { data: profile } = await supabaseAdmin.from("profiles").select("*").eq("clerk_user_id", data.clerkUserId).single();
+  // NOTE: this endpoint's field was historically named `clerkUserId` to mean
+  // "the profile I want to look up", but requireAuth overwrites
+  // req.body.clerkUserId with the CALLER's own id on every request (by
+  // design, for routes where that field means "me"). That silently made this
+  // endpoint always return your own profile instead of the one you asked
+  // for. Prefer the new `targetClerkId` field going forward; fall back to
+  // the client's original value (preserved by the middleware) for existing
+  // frontend callers that still send `clerkUserId` as the target.
+  const data = z.object({
+    targetClerkId: z.string().min(1).max(255).optional(),
+    callerSuppliedClerkUserId: z.string().min(1).max(255).optional(),
+  }).parse(req.body);
+  const targetId = data.targetClerkId || data.callerSuppliedClerkUserId;
+  if (!targetId) throw new Error("targetClerkId is required");
+  const { data: profile } = await supabaseAdmin.from("profiles").select("*").eq("clerk_user_id", targetId).maybeSingle();
   return profile || null;
 }));
 

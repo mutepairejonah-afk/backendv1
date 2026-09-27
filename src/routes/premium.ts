@@ -16,7 +16,7 @@ const rp = async (res: any, fn: () => Promise<any>) => {
 
 premiumRouter.post("/get-premium-status", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
-  const { data: profile } = await supabaseAdmin.from("profiles").select("subscription_tier, hide_read_receipts, verified, bio_links, is_admin").eq("clerk_user_id", data.clerkUserId).single();
+  const { data: profile } = await supabaseAdmin.from("profiles").select("subscription_tier, hide_read_receipts, verified, bio_links, is_admin").eq("clerk_user_id", data.clerkUserId).maybeSingle();
   const isAdmin = isBackendAdmin(data.clerkUserId) || profile?.is_admin === true;
   const effectiveTier = isAdmin ? "pro" : ((profile?.subscription_tier as string) ?? "free");
   return { tier: effectiveTier, isAdmin, hideReadReceipts: profile?.hide_read_receipts ?? false, verified: profile?.verified ?? false, bioLinks: profile?.bio_links ?? [] };
@@ -51,6 +51,6 @@ premiumRouter.post("/update-bio-links", requireAuth, (req, res) => rp(res, async
 
 premiumRouter.post("/get-is-admin", requireAuth, (req, res) => rp(res, async () => {
   const data = z.object({ clerkUserId: z.string().min(1).max(255) }).parse(req.body);
-  const { data: profile } = await supabaseAdmin.from("profiles").select("is_admin").eq("clerk_user_id", data.clerkUserId).single();
+  const { data: profile } = await supabaseAdmin.from("profiles").select("is_admin").eq("clerk_user_id", data.clerkUserId).maybeSingle();
   return { isAdmin: isBackendAdmin(data.clerkUserId) || profile?.is_admin === true };
 }));
