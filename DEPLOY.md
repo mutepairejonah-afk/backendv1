@@ -67,10 +67,11 @@ The image has a non-root runtime user and a Docker health check. Docker Compose 
 `fly.toml` in the repo root deploys the main web service to Fly using the existing `Dockerfile` — no separate Fly-specific Dockerfile needed.
 
 ```bash
-flyctl launch --no-deploy   # first time only, or edit the `app` name in fly.toml to one you've already reserved
 flyctl secrets set CLERK_SECRET_KEY=... CLERK_WEBHOOK_SECRET=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENROUTER_API_KEY=... ALLOWED_ORIGINS=https://your-frontend.example.com
 flyctl deploy
 ```
+
+The Fly app (`backendv1-wp9-qa`, region `ams`) already exists from an earlier `flyctl launch` run, so `flyctl deploy` alone is enough here. On a brand-new Fly account/app, run `flyctl launch --no-deploy` first (or edit the `app` name in `fly.toml` to one you've reserved).
 
 Set every secret listed in [Required environment variables](#required-environment-variables) this way (anything marked `sync: false` in `render.yaml`) — `flyctl secrets set` persists them across deploys, so this is a one-time step per app, not per deploy.
 

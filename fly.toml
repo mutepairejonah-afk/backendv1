@@ -1,47 +1,49 @@
-# Fly.io configuration for the main web service.
+# fly.toml -- reconciled from `flyctl launch`'s auto-generated scaffold
+# (app name/region below are the actual registered Fly app) plus fixes for
+# two issues the generated scaffold got wrong for this specific backend:
 #
-# The retention-sweep cron job stays on Render (see render.yaml) -- Fly
-# doesn't have a built-in "scheduled job" service type the way Render does.
-# Running a tiny daily cron isn't worth a Fly Machines-based scheduler setup
-# (systemd timer / flyctl machine run on a cron trigger) when Render already
-# does it natively for ~$1/month. Only this web service moves to Fly.
+# 1. internal_port was 8080, but this app listens on `process.env.PORT`,
+#    which defaults to 3001 (see src/index.ts) and nothing here sets PORT=8080.
+#    Fly would proxy to a port nothing is listening on and every health check
+#    would fail. Fixed by setting internal_port to 3001 to match, via an
+#    explicit PORT env var so both the app and Fly's proxy agree.
+# 2. auto_stop_machines='stop' + min_machines_running=0 (scale-to-zero) would
+#    silently drop this backend's long-lived Socket.IO connections
+#    (src/socket.ts -- realtime messages/calls/presence) whenever traffic
+#    dipped. Fixed by keeping exactly one machine always warm instead.
 #
-# Deploy: `flyctl launch --no-deploy` once to create the app (or edit `app`
-# below to match a name you've already reserved), then `flyctl deploy`.
-# Secrets (anything marked sync: false in render.yaml) are NOT set here --
-# set them with `flyctl secrets set KEY=value` once per app, they persist
-# across deploys.
+# The retention-sweep cron job stays on Render (see render.yaml and
+# DEPLOY.md) -- only this web service runs on Fly.
+#
+# Deploy: `flyctl deploy` (app already exists from the original `flyctl
+# launch` run). Secrets (anything marked `sync: false` in render.yaml) are
+# set once with `flyctl secrets set KEY=value` and persist across deploys.
 
-app = "chatapp-backend"
-primary_region = "iad"
+app = 'backendv1-wp9-qa'
+primary_region = 'ams'
 
 [build]
 
 [env]
-  NODE_ENV = "production"
-  HOST = "0.0.0.0"
-  # Fly injects PORT automatically to match [http_service].internal_port
-  # below, so it does not need to be set here.
+  NODE_ENV = 'production'
+  HOST = '0.0.0.0'
+  PORT = '3001'
 
 [http_service]
   internal_port = 3001
   force_https = true
-  # This backend holds long-lived Socket.IO connections (src/socket.ts) for
-  # realtime messages/calls/presence. Scale-to-zero would silently drop those
-  # connections whenever traffic dips, so we keep exactly one machine warm at
-  # all times instead of letting Fly suspend it.
-  auto_stop_machines = "off"
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["app"]
+  processes = ['app']
 
   [[http_service.checks]]
-    grace_period = "10s"
-    interval = "30s"
-    method = "GET"
-    timeout = "5s"
-    path = "/health"
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    timeout = '5s'
+    path = '/health'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
