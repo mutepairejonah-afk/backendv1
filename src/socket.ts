@@ -4,17 +4,16 @@ import { verifyToken } from "@clerk/backend";
 import { aiChatReply } from "./lib/ai.js";
 import { supabaseAdmin } from "./lib/supabase.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
-
-const pushTokens = new Map<string, string>();
+import { savePushToken, getPushTokensForUser, getPushTokensForUsers, deletePushToken } from "./pushTokens.js";
 
 async function sendExpoPush(opts: {
   token: string;
   title: string;
   body: string;
   data?: Record<string, unknown>;
-}) {
+}): Promise<{ ok: boolean; tokenInvalid?: boolean }> {
   try {
-    await fetch("https://exp.host/api/v2/push/send", {
+    const res = await fetch("https://exp.host/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
@@ -27,8 +26,17 @@ async function sendExpoPush(opts: {
         channelId: "messages",
       }),
     });
+    const json: any = await res.json().catch(() => null);
+    const ticket = json?.data;
+    const errorCode = (Array.isArray(ticket) ? ticket[0] : ticket)?.details?.error;
+    if (errorCode === "DeviceNotRegistered") {
+      await deletePushToken(opts.token);
+      return { ok: false, tokenInvalid: true };
+    }
+    return { ok: res.ok };
   } catch (e) {
     console.error("[push] failed:", e);
+    return { ok: false };
   }
 }
 
@@ -115,8 +123,12 @@ export function notifyContactRequest(toClerkId: string, requesterClerkId: string
   if (!io) return;
   const payload = { requesterClerkId, requesterName };
   safeEmit(() => io!.to(userRoom(toClerkId)).emit("contact:request", payload));
-  const token = pushTokens.get(toClerkId);
-  if (token) void sendExpoPush({ token, title: "New friend request", body: `${requesterName || "Someone"} wants to connect with you`, data: { type: "contact_request", requesterClerkId } });
+  void (async () => {
+    const tokens = await getPushTokensForUser(toClerkId);
+    for (const token of tokens) {
+      void sendExpoPush({ token, title: "New friend request", body: `${requesterName || "Someone"} wants to connect with you`, data: { type: "contact_request", requesterClerkId } });
+    }
+  })();
 }
 
 export function emitContactsUpdated(clerkUserIds: string[]) {
@@ -197,7 +209,7 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
 
     socket.on("push:register", safe(({ clerkUserId, token }) => {
       if (!clerkUserId || !token) return;
-      pushTokens.set(clerkUserId, token);
+      void savePushToken(clerkUserId, token);
     }));
 
     socket.on("conv:join", async (conversationId) => {
@@ -236,22 +248,28 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
           if (replyTargetId && replyTargetId !== senderClerkId) {
             const payload = { conversationId, message, parentMessageId: message.reply_to_message_id };
             io?.to(userRoom(replyTargetId)).emit("comment:reply", payload);
-            const token = pushTokens.get(replyTargetId);
-            if (token) void sendExpoPush({ token, title: senderName || "New reply", body: message.text ? message.text.slice(0, 100) : "Someone replied to your comment", data: { type: "comment_reply", conversationId, messageId: message.id, parentMessageId: message.reply_to_message_id } });
+            const tokens = await getPushTokensForUser(replyTargetId);
+            for (const token of tokens) {
+              void sendExpoPush({ token, title: senderName || "New reply", body: message.text ? message.text.slice(0, 100) : "Someone replied to your comment", data: { type: "comment_reply", conversationId, messageId: message.id, parentMessageId: message.reply_to_message_id } });
+            }
           }
         }
         if (Array.isArray(participantIds)) {
+          const notifyIds = participantIds.filter((clerkId: string) => clerkId !== senderClerkId && (!message.reply_to_message_id || clerkId !== replyTargetId));
+          const tokensByUser = await getPushTokensForUsers(notifyIds);
           for (const clerkId of participantIds) {
             io?.to(userRoom(clerkId)).emit("message:new", { conversationId, message });
             if (clerkId !== senderClerkId && (!message.reply_to_message_id || clerkId !== replyTargetId)) {
-              const token = pushTokens.get(clerkId);
-              if (token) {
+              const tokens = tokensByUser.get(clerkId) || [];
+              if (tokens.length) {
                 const body = message.text ? message.text.slice(0, 100)
                   : message.image_url ? "📷 Photo"
                   : message.file_name ? `📎 ${message.file_name}`
                   : message.file_url?.includes("audio") ? "🎤 Voice message"
                   : "New message";
-                void sendExpoPush({ token, title: senderName || "New message", body, data: { conversationId } });
+                for (const token of tokens) {
+                  void sendExpoPush({ token, title: senderName || "New message", body, data: { conversationId } });
+                }
               }
             }
           }
