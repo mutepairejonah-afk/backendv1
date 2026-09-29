@@ -71,17 +71,16 @@ app.use(
 
 // Keep ordinary API requests small. Base64 media uploads are explicitly
 // allowlisted below and still have route-level Zod/file-size validation.
+// NOTE: upload-chat-media, upload-document-message, upload-avatar,
+// upload-moment-image, upload-story-media, upload-video-status, and
+// upload-payment-screenshot moved to Supabase Edge Functions (see
+// supabase/functions/media, /payments), so this Express app no longer needs
+// a raised body limit for them. upload-group-avatar is the only remaining
+// upload endpoint still served here.
 const largeBodyRoutes = [
-  "/api/upload-chat-media",
-  "/api/upload-document-message",
-  "/api/upload-avatar",
-  "/api/upload-moment-image",
-  "/api/upload-story-media",
-  "/api/upload-video-status",
   "/api/upload-group-avatar",
-  "/api/upload-payment-screenshot",
 ];
-for (const route of largeBodyRoutes) app.use(route, express.json({ limit: "140mb" }));
+for (const route of largeBodyRoutes) app.use(route, express.json({ limit: "20mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
@@ -110,9 +109,10 @@ const missingEnv = requiredEnv.filter((name) => !process.env[name]?.trim());
 if (missingEnv.length) {
   throw new Error(`Missing required environment variables: ${missingEnv.join(", ")}`);
 }
-if (!process.env.GEMINI_API_KEY?.trim() && !process.env.OPENROUTER_API_KEY?.trim()) {
-  throw new Error("Configure GEMINI_API_KEY or OPENROUTER_API_KEY for AI features");
-}
+// AI features (ai.ts, agent.ts) moved to Supabase Edge Functions -- see
+// supabase/functions/ai. GEMINI_API_KEY/OPENROUTER_API_KEY are no longer
+// required here; set them as Edge Function secrets instead
+// (`supabase secrets set`), not as Render environment variables.
 
 const httpServer = createServer(app);
 const ioServer = attachSocketServer(httpServer);

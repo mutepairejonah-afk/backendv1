@@ -1,7 +1,12 @@
-import { supabaseAdmin } from "./supabase.js";
+// Ported from src/lib/agent.ts (Node backend) -- see the note atop
+// _shared/ai.ts. Only the supabaseAdmin import path and process.env.X ->
+// Deno.env.get("X") changed; all logic (tool definitions, tool-calling loop,
+// membership checks) is identical.
 
-const getOpenRouterApiKey = () => process.env.OPENROUTER_API_KEY;
-const DEFAULT_MODEL = process.env.OPENROUTER_MODEL_PRO || process.env.OPENROUTER_MODEL_PREMIUM || "meta-llama/llama-3.1-8b-instruct";
+import { supabaseAdmin } from "./supabase-admin.ts";
+
+const getOpenRouterApiKey = () => Deno.env.get("OPENROUTER_API_KEY");
+const DEFAULT_MODEL = Deno.env.get("OPENROUTER_MODEL_PRO") || Deno.env.get("OPENROUTER_MODEL_PREMIUM") || "meta-llama/llama-3.1-8b-instruct";
 
 type AgentMessage = { role: "system" | "user" | "assistant" | "tool"; content: string | null; tool_call_id?: string; tool_calls?: any[] };
 
@@ -116,7 +121,7 @@ export async function runCommunicationAgent(
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}`, "X-Title": "ChatApp Agent" },
-      body: JSON.stringify({ model: tier === "pro" ? DEFAULT_MODEL : (process.env.OPENROUTER_MODEL_FREE || DEFAULT_MODEL), messages, tools, tool_choice: "auto", max_tokens: 1000 }),
+      body: JSON.stringify({ model: tier === "pro" ? DEFAULT_MODEL : (Deno.env.get("OPENROUTER_MODEL_FREE") || DEFAULT_MODEL), messages, tools, tool_choice: "auto", max_tokens: 1000 }),
     });
     if (!response.ok) throw new Error(`Agent model error (${response.status}): ${await response.text().catch(() => response.statusText)}`);
     const payload = await response.json();

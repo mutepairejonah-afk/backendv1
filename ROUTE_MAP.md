@@ -2,11 +2,18 @@
 
 Generated from the current checked-out backend source.
 
+**ai.ts, agent.ts, media.ts, and payments.ts are no longer part of this
+service** — they moved to Supabase Edge Functions to keep this Render web
+service's compute footprint light. See `supabase/functions/README.md` for
+their current endpoints and deploy instructions.
+
 ## Connection flow
 
 ```text
 HTTP request -> src/index.ts -> CORS/body limits/rate limit -> /api -> src/routes/index.ts -> feature router -> Clerk auth -> Zod validation -> Supabase/provider operation -> JSON response
 Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake -> authenticated socket event -> user/conversation room relay
+Edge Function request -> Supabase (separate infra) -> supabase/functions/<name>/index.ts -> Clerk token verification -> Zod validation -> Supabase/provider operation -> JSON response
+                                                      -> (media's video endpoints only) -> internal broadcast bridge -> src/routes/internal.ts on Render -> Socket.IO
 ```
 
 ## Direct mounts
@@ -16,25 +23,7 @@ Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake 
 - All feature REST routers are mounted under `/api` in `src/routes/index.ts`.
 - Socket.IO uses the same origin at `/socket.io`.
 
-## REST route inventory
-
-### agent.ts
-
-- POST /ai/agent — source line 18
-
-### ai.ts
-
-- POST /ai/conversation-brief — source line 77
-- POST /ai/draft-reply — source line 142
-- POST /ai/review-message — source line 156
-- POST /ai-chat-assist — source line 167
-- POST /translate-message — source line 178
-- POST /ai-summarize-unread — source line 185
-- POST /ai-draft-order-reply — source line 195
-- POST /ai-summarize-call — source line 202
-- POST /ai/smart-replies — source line 210
-- POST /ai/action-items — source line 228
-- POST /ai/channel-description — source line 245
+## REST route inventory (this Render service)
 
 ### calls.ts
 
@@ -109,12 +98,12 @@ Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake 
 - POST /upload-group-avatar — source line 166
 - POST /set-conversation-mute — source line 185
 
-### media.ts
+### internal.ts
 
-- POST /upload-chat-media — source line 26
-- POST /upload-document-message — source line 61
-- POST /upload-avatar — source line 81
-- POST /upload-moment-image — source line 93
+Not user-facing -- authenticated by a shared secret header (`X-Internal-Secret`), not a Clerk token. Exists so the moved `media` Edge Function can trigger a realtime broadcast after writing to the database, since only this process holds live Socket.IO connections.
+
+- POST /internal/broadcast-moment-created — source line 32
+- POST /internal/broadcast-moment-deleted — source line 39
 
 ### messages.ts
 
@@ -158,6 +147,27 @@ Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake 
 - POST /delete-moment — source line 66
 - POST /delete-moment-comment — source line 76
 
+### operations.ts
+
+Group/channel moderation surface -- routes are built from a `route()` helper, so paths below are camelCase rather than kebab-case like the rest of this backend.
+
+- POST /createGroup, /renameGroup, /updateGroupDescription, /deleteGroup — source lines 27-30
+- POST /addMember, /removeMember, /leaveGroup, /setMemberRole, /muteMember, /unmuteMember — source lines 31-36
+- POST /kickMember, /banMember, /unbanMember, /setMemberRestrictions, /setSlowMode — source lines 38-42
+- POST /getGroupMembers, /getGroupById, /listUserGroups — source lines 43-45
+- POST /createChannel, /renameChannel, /updateChannelDescription, /deleteChannel — source lines 47-51
+- POST /setChannelVisibility, /subscribeToChannel, /unsubscribeFromChannel, /getChannelSubscribers, /getChannelById, /listUserChannels — source lines 52-57
+- POST /postMessage, /schedulePost, /publishScheduledPost, /cancelScheduledPost, /editPost, /deletePost — source lines 59-65
+- POST /setSilentPost, /setAnonymousAdminPosting, /incrementPostView, /getPostViewCount — source lines 66-69
+- POST /linkCommentsGroup, /unlinkCommentsGroup, /getCommentsGroup — source lines 70-72
+- POST /deleteAllMessagesFromUser, /pinMessage, /unpinMessage, /getPinnedMessages — source lines 73-77
+- POST /createInviteLink, /revokeInviteLink, /getInviteLinkInfo, /generateInviteQRCode — source lines 79-82
+- POST /setNotificationMute, /setMessageAutoDelete — source lines 83-84
+- POST /addAdmin, /removeAdmin, /setAdminPermissions, /setAdminTitle, /logAdminAction, /getAdminAuditLog — source lines 85-91
+- POST /searchPublicGroupsAndChannels — source line 92
+- POST /createJoinRequest, /approveJoinRequest, /rejectJoinRequest — source lines 94-96
+- POST /joinSocketRoom, /leaveSocketRoom, /emitMembershipUpdate, /emitRoleChangeEvent, /emitPinUpdateEvent, /emitNewPostEvent — source lines 99-104
+
 ### premium.ts
 
 - POST /get-premium-status — source line 16
@@ -185,6 +195,32 @@ Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake 
 - POST /get-my-sessions — source line 72
 - POST /revoke-session — source line 78
 - POST /get-security-events — source line 92
+
+### spaces.ts
+
+Chat folders (Telegram-style) and per-user theme preference.
+
+- POST /get-smart-spaces — source line 29
+- POST /create-smart-space — source line 34
+- POST /update-smart-space — source line 40
+- POST /delete-smart-space — source line 49
+- POST /add-smart-space-rule — source line 56
+- POST /remove-smart-space-rule — source line 65
+- POST /reorder-smart-spaces — source line 75
+- POST /get-theme — source line 81
+- POST /update-theme — source line 86
+
+### stories.ts
+
+- POST /create-story — source line 11
+- POST /get-stories — source line 20
+- POST /mark-story-viewed — source line 30
+- POST /delete-story — source line 37
+- POST /get-story-view-counts — source line 47
+- POST /get-story-viewers — source line 56
+- POST /create-story-highlight — source line 69
+- POST /get-story-highlights — source line 79
+- POST /delete-story-highlight — source line 87
 
 ### support.ts
 
@@ -222,4 +258,6 @@ Socket.IO request -> same HTTP server -> src/socket.ts -> Clerk token handshake 
 
 ## Authentication note
 
-All API feature routes are protected by `requireAuth` except the Clerk webhook, which uses webhook signature verification. Clients send `Authorization: Bearer <Clerk session token>`.
+All API feature routes on this Render service are protected by `requireAuth` except the Clerk webhook (Svix signature verification) and `internal.ts` (shared-secret header, called only by the Edge Functions below). Clients send `Authorization: Bearer <Clerk session token>`.
+
+The `ai`, `media`, and `payments` Supabase Edge Functions verify the same Clerk Bearer token independently (they run on separate infrastructure with no shared session state) -- see `supabase/functions/README.md`.

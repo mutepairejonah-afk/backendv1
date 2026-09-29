@@ -1,6 +1,9 @@
 # Deploying the ChatApp backend
 
-The backend is a standalone Node.js service. It owns REST API routes, Socket.IO, authentication, and server-side AI calls. Deploy it as a long-running web service with the start command `npm start` and a public HTTP port supplied through `PORT`.
+The backend is split across two places now:
+
+- **This Node.js service** (Render/Fly) owns REST API routes for chat/social features, Socket.IO, and authentication. Deploy it as a long-running web service with the start command `npm start` and a public HTTP port supplied through `PORT`.
+- **Supabase Edge Functions** (`supabase/functions/`) own the AI endpoints, file uploads, and EcoCash payments — moved there to keep this Node service's compute footprint light enough to stay comfortably on a free tier. See `supabase/functions/README.md` for that half of the deploy.
 
 ## Required environment variables
 
@@ -16,10 +19,11 @@ CLERK_WEBHOOK_SECRET=...
 ADMIN_CLERK_ID=user_...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
-OPENROUTER_API_KEY=...
+INTERNAL_FUNCTIONS_SECRET=...
+GEMINI_API_KEY=...
 ```
 
-Set either `OPENROUTER_API_KEY` or `GEMINI_API_KEY`. The backend never sends these keys to the frontend. If using Gemini, set `GEMINI_MODEL` to a currently available model. For WebRTC calls, configure a public TURN server with `TURN_SECRET`, `TURN_PUBLIC_HOST`, and `TURN_PORT`; localhost TURN settings are not suitable for production phones.
+`GEMINI_API_KEY` (or `OPENROUTER_API_KEY`) is only needed here for `src/socket.ts`'s realtime `ai:chat` event — every other AI feature moved to the `ai` Edge Function and needs its own copy of this key set via `supabase secrets set` instead (see `supabase/functions/README.md`). The backend never sends these keys to the frontend. If using Gemini, set `GEMINI_MODEL` to a currently available model. `INTERNAL_FUNCTIONS_SECRET` authenticates calls from the `media` Edge Function back to this service, for triggering a realtime broadcast after a video upload -- generate a long random value and set the identical value as an Edge Function secret. For WebRTC calls, configure a public TURN server with `TURN_SECRET`, `TURN_PUBLIC_HOST`, and `TURN_PORT`; localhost TURN settings are not suitable for production phones.
 
 `ADMIN_CLERK_ID` is the Clerk **user ID** of the backend administrator, not the email address and not the Clerk session ID. You can set `ADMIN_CLERK_IDS` instead when multiple backend administrators are needed, using comma-separated Clerk user IDs. Add this variable in Render under **Service → Environment → Environment Variables**, then redeploy. The configured administrator can manage groups and channels without first being listed as a member.
 
@@ -78,6 +82,19 @@ Set every secret listed in [Required environment variables](#required-environmen
 `min_machines_running = 1` with `auto_stop_machines = "off"` keeps exactly one machine warm at all times, rather than Fly's usual scale-to-zero. This is intentional: the backend holds long-lived Socket.IO connections for realtime messages, calls, and presence, and scale-to-zero would silently drop those connections whenever traffic dipped.
 
 **The `retention-sweep` cron job stays on Render** (see `render.yaml`) even if you move the main web service to Fly. Fly doesn't have a built-in scheduled-job service type the way Render does — running it there would mean a Fly Machine on a systemd-timer/cron trigger, which is more setup than the job is worth. Render's `cron` service type already runs it natively for about $1/month; there's no reason to migrate a job this small and this cheap. If you do want it fully off Render at some point, the equivalent on Fly is `flyctl machine run` with a scheduled trigger, or an external scheduler (e.g. GitHub Actions on a `schedule:` cron) hitting a one-off script — neither is set up here.
+
+## Supabase Edge Functions
+
+The `ai`, `media`, and `payments` functions in `supabase/functions/` must be deployed separately from this Node service — they don't run on Render/Fly at all. Full details, including why the large-video upload endpoints use a two-step signed-URL flow instead of a single request, are in `supabase/functions/README.md`. Short version:
+
+```bash
+supabase secrets set CLERK_SECRET_KEY=... GEMINI_API_KEY=... OPENROUTER_API_KEY=... ADMIN_CLERK_ID=... RENDER_INTERNAL_URL=https://your-service.onrender.com INTERNAL_FUNCTIONS_SECRET=<same value set on Render>
+supabase functions deploy ai
+supabase functions deploy media
+supabase functions deploy payments
+```
+
+The frontend needs updating to call these at their own Supabase URLs (`https://<project>.supabase.co/functions/v1/<name><original-path>`) instead of this service's `/api/...` paths for anything that used to be `ai.ts`, `agent.ts`, `media.ts`, or `payments.ts`.
 
 ## Pre-deployment checks
 
