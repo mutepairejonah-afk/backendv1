@@ -1509,3 +1509,149 @@ create index if not exists call_logs_conversation_idx on public.call_logs(conver
 
 alter table public.call_logs enable row level security;
 
+
+-- =============================================================
+-- FILE: 20260920000000_add_api_rate_limit_table.sql
+-- =============================================================
+-- The Node backend's rate limiter (src/lib/rate-limit.ts) uses an in-memory
+-- Map, which works fine on a single long-lived Render process. Supabase Edge
+-- Functions are short-lived, independently-scaled Deno isolates -- an
+-- in-memory Map there would not be shared across invocations, making rate
+-- limiting silently ineffective. This table + RPC gives the moved AI/media/
+-- payments Edge Functions an atomic, shared rate limiter instead.
+
+CREATE TABLE IF NOT EXISTS public.api_rate_limits (
+  key text PRIMARY KEY,
+  count integer NOT NULL DEFAULT 0,
+  reset_at timestamptz NOT NULL
+);
+
+-- Best-effort cleanup of old buckets; not required for correctness (expired
+-- rows are also handled correctly, just not deleted, by check_rate_limit
+-- itself), but keeps the table from growing unbounded.
+CREATE INDEX IF NOT EXISTS api_rate_limits_reset_at_idx ON public.api_rate_limits(reset_at);
+
+-- Atomically checks and increments a rate-limit bucket. Returns true if the
+-- request is allowed, false if the caller is over the limit. Safe under
+-- concurrent calls for the same key (single UPDATE/INSERT statement with a
+-- row-level lock via ON CONFLICT, no read-then-write race).
+CREATE OR REPLACE FUNCTION public.check_rate_limit(p_key text, p_max_reqs integer, p_window_ms integer)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_now timestamptz := now();
+  v_new_reset timestamptz := v_now + (p_window_ms || ' milliseconds')::interval;
+  v_count integer;
+BEGIN
+  INSERT INTO public.api_rate_limits (key, count, reset_at)
+  VALUES (p_key, 1, v_new_reset)
+  ON CONFLICT (key) DO UPDATE SET
+    count = CASE
+      WHEN public.api_rate_limits.reset_at <= v_now THEN 1
+      ELSE public.api_rate_limits.count + 1
+    END,
+    reset_at = CASE
+      WHEN public.api_rate_limits.reset_at <= v_now THEN v_new_reset
+      ELSE public.api_rate_limits.reset_at
+    END
+  RETURNING count INTO v_count;
+
+  RETURN v_count <= p_max_reqs;
+END;
+$$;
+
+-- Occasionally sweep expired buckets. Call this from a scheduled job if you
+-- have one; harmless to skip, the table just grows slightly over time.
+CREATE OR REPLACE FUNCTION public.cleanup_expired_rate_limits()
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  DELETE FROM public.api_rate_limits WHERE reset_at < now() - interval '1 hour';
+$$;
+
+ALTER TABLE public.api_rate_limits ENABLE ROW LEVEL SECURITY;
+-- No policies granted: only the service-role key (used by Edge Functions,
+-- which bypasses RLS) and the SECURITY DEFINER functions above can touch
+-- this table. It holds no user-readable data, so there's no "authenticated
+-- select own rows" policy to add.
+
+-- =============================================================
+-- FILE: 20260920000000_add_push_tokens.sql
+-- =============================================================
+-- Replaces the in-memory `pushTokens` Map in src/socket.ts, which had two
+-- real problems: (1) unbounded growth for the life of the process -- one
+-- entry per distinct user, never removed; (2) total data loss on every
+-- restart, and Render's free tier spins the service down on inactivity,
+-- so push notifications would silently stop working for every user until
+-- each one reopened the app and reconnected. A DB-backed table also lets
+-- one user register tokens from multiple devices, which the old
+-- Map<clerkUserId, token> couldn't (the second device's token just
+-- overwrote the first).
+
+create table if not exists public.push_tokens (
+  id uuid primary key default gen_random_uuid(),
+  clerk_user_id text not null,
+  token text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (token)
+);
+
+create index if not exists push_tokens_clerk_user_idx on public.push_tokens(clerk_user_id);
+
+alter table public.push_tokens enable row level security;
+
+-- =============================================================
+-- FILE: 20260921000000_replace_render_cron_with_pg_cron.sql
+-- =============================================================
+-- Replaces the Render "chatapp-backend-retention-sweep" cron service (see
+-- render.yaml, now removed) with a job scheduled directly inside Postgres.
+-- Render has no free tier for cron-type services at all -- this was the one
+-- item on the Render side actually generating a bill, for a job whose entire
+-- logic is a single DELETE statement. pg_cron runs inside Supabase's existing
+-- Postgres instance at no extra cost, so there's nothing left to pay for.
+--
+-- This does the same thing src/jobs/retention-sweep.ts did: deletes any
+-- message past its per-message `expires_at` timer (Telegram-style
+-- disappearing messages). The Node script/Render cron are no longer needed
+-- for this and have been removed; src/jobs/retention-sweep.ts is kept in the
+-- repo only as an optional manual/local fallback (see its updated comment).
+
+CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog;
+GRANT USAGE ON SCHEMA cron TO postgres;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
+
+CREATE OR REPLACE FUNCTION public.sweep_expired_messages()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_deleted_count integer;
+BEGIN
+  DELETE FROM public.messages
+  WHERE expires_at IS NOT NULL AND expires_at < now();
+
+  GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+
+  IF v_deleted_count > 0 THEN
+    INSERT INTO public.security_events (event_type, severity, metadata)
+    VALUES ('retention.swept', 'info', jsonb_build_object('deletedCount', v_deleted_count));
+  END IF;
+END;
+$$;
+
+-- Unschedule first so re-running this migration doesn't create a duplicate
+-- job (cron.schedule with a name that already exists errors, it doesn't
+-- upsert).
+SELECT cron.unschedule('sweep-expired-messages')
+WHERE EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'sweep-expired-messages');
+
+-- Same daily 03:00 UTC schedule the Render cron used.
+SELECT cron.schedule('sweep-expired-messages', '0 3 * * *', 'SELECT public.sweep_expired_messages();');

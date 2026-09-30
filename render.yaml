@@ -67,22 +67,11 @@ services:
       - key: XIRSYS_CHANNEL
         sync: false
 
-  # retention-sweep.ts existed in code but was never actually scheduled
-  # anywhere — org message-retention policies were silently doing nothing.
-  # Runs once daily at 03:00 UTC; adjust the schedule as you like.
-  # NOTE: unlike the free web service above, Render bills cron jobs
-  # separately (metered by runtime, ~$1/month minimum) — there's no free
-  # tier for this service type as of 2026.
-  - type: cron
-    name: chatapp-backend-retention-sweep
-    runtime: node
-    plan: starter
-    region: oregon
-    schedule: "0 3 * * *"
-    buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm run retention-sweep
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
+# The retention-sweep cron service that used to run here has been removed.
+# Its entire job (deleting messages past their expires_at timer) now runs as
+# a pg_cron job directly inside Supabase Postgres instead -- see
+# supabase/migrations/20260921000000_replace_render_cron_with_pg_cron.sql.
+# This was the only billed line item in this file (Render has no free tier
+# for cron-type services); the web service above has always been on the free
+# plan. src/jobs/retention-sweep.ts is kept in the repo as an optional manual
+# fallback, but nothing schedules it anymore.

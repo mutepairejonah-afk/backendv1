@@ -2,14 +2,17 @@
  * Expired-message sweep — deletes any message past its `expires_at` timer
  * (Telegram-style disappearing messages set per-message at send time).
  *
+ * This is no longer scheduled anywhere by default. The actual sweep runs as
+ * a pg_cron job directly inside Supabase Postgres instead -- see
+ * supabase/migrations/20260921000000_replace_render_cron_with_pg_cron.sql --
+ * since that runs for free inside the existing database, whereas a Render
+ * cron service is billed separately with no free tier. This script is kept
+ * only as an optional manual/local fallback (e.g. to run a one-off sweep
+ * from your machine): `npm run retention-sweep`.
+ *
  * The client also calls POST /sweep-expired-messages for the conversation
  * it currently has open, so messages disappear immediately while the app is
- * in use. This job is the backstop for conversations nobody has open.
- *
- * Run this on a schedule (e.g. Render Cron Job, every few minutes):
- *   node dist/jobs/retention-sweep.js
- *
- * Or locally: tsx src/jobs/retention-sweep.ts
+ * in use; the pg_cron job is the backstop for conversations nobody has open.
  */
 import "dotenv/config";
 import { supabaseAdmin } from "../lib/supabase.js";
