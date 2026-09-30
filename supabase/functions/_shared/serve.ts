@@ -33,18 +33,36 @@ export function serve(routes: Record<string, Handler>) {
     }
 
     try {
-      const clerkUserId = await requireAuth(req);
+      // Two ways to authenticate a request:
+      // 1. A real Clerk Bearer token from an end user (the normal path).
+      // 2. X-Internal-Secret + an explicit clerkUserId in the body, for
+      //    trusted server-to-server calls from the Render backend, which
+      //    already verified the user itself (e.g. src/socket.ts's ai:chat
+      //    event, called on a long-lived socket connection where the
+      //    original short-lived Clerk token from the handshake would have
+      //    expired long before a later event fires). This is the same trust
+      //    model as src/routes/internal.ts on the Render side, just in the
+      //    other direction.
+      const internalSecret = req.headers.get("x-internal-secret");
+      const configuredSecret = Deno.env.get("INTERNAL_FUNCTIONS_SECRET");
+      let clerkUserId: string;
       let body: Record<string, unknown> = {};
       if (req.method !== "GET") {
         const text = await req.text();
         if (text) body = JSON.parse(text);
       }
-      // Same rule as the Node middleware: the verified token's subject wins
-      // over whatever the client put in the body's clerkUserId field, so a
-      // caller can never act as (or claim to look up as) someone else by
-      // spoofing that field. Preserve what they actually sent under
-      // callerSuppliedClerkUserId for the few handlers that use `clerkUserId`
-      // to mean "the other user", same as the Node side.
+
+      if (configuredSecret && internalSecret === configuredSecret && typeof body.clerkUserId === "string" && body.clerkUserId) {
+        clerkUserId = body.clerkUserId;
+      } else {
+        clerkUserId = await requireAuth(req);
+      }
+
+      // Same rule as the Node middleware: the verified/trusted identity wins
+      // over whatever else might be in the body, so a caller can never act as
+      // someone else by spoofing this field. Preserve what was actually sent
+      // under callerSuppliedClerkUserId for the few handlers that use
+      // `clerkUserId` to mean "the other user", same as the Node side.
       if (typeof body.clerkUserId === "string") {
         body.callerSuppliedClerkUserId = body.clerkUserId;
       }

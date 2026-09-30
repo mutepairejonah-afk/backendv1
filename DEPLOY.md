@@ -20,10 +20,10 @@ ADMIN_CLERK_ID=user_...
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 INTERNAL_FUNCTIONS_SECRET=...
-GEMINI_API_KEY=...
+SUPABASE_FUNCTIONS_URL=...
 ```
 
-`GEMINI_API_KEY` (or `OPENROUTER_API_KEY`) is only needed here for `src/socket.ts`'s realtime `ai:chat` event — every other AI feature moved to the `ai` Edge Function and needs its own copy of this key set via `supabase secrets set` instead (see `supabase/functions/README.md`). The backend never sends these keys to the frontend. If using Gemini, set `GEMINI_MODEL` to a currently available model. `INTERNAL_FUNCTIONS_SECRET` authenticates calls from the `media` Edge Function back to this service, for triggering a realtime broadcast after a video upload -- generate a long random value and set the identical value as an Edge Function secret. For WebRTC calls, configure a public TURN server with `TURN_SECRET`, `TURN_PUBLIC_HOST`, and `TURN_PORT`; localhost TURN settings are not suitable for production phones.
+This Node service no longer needs its own AI provider key at all -- `src/socket.ts`'s realtime `ai:chat` event calls the `ai` Supabase Edge Function's `/ai-chat-assist` (via `SUPABASE_FUNCTIONS_URL` + `INTERNAL_FUNCTIONS_SECRET`) rather than running the AI call in-process, so `GEMINI_API_KEY`/`OPENROUTER_API_KEY` now only need to be set as Edge Function secrets (see `supabase/functions/README.md`), not here. `INTERNAL_FUNCTIONS_SECRET` is used in both directions: it authenticates calls from the `media` Edge Function back to this service (triggering a realtime broadcast after a video upload), and calls from this service to the `ai` Edge Function (the `ai:chat` event above) -- generate one long random value and set the identical value on both sides. For WebRTC calls, configure a public TURN server with `TURN_SECRET`, `TURN_PUBLIC_HOST`, and `TURN_PORT`; localhost TURN settings are not suitable for production phones.
 
 `ADMIN_CLERK_ID` is the Clerk **user ID** of the backend administrator, not the email address and not the Clerk session ID. You can set `ADMIN_CLERK_IDS` instead when multiple backend administrators are needed, using comma-separated Clerk user IDs. Add this variable in Render under **Service → Environment → Environment Variables**, then redeploy. The configured administrator can manage groups and channels without first being listed as a member.
 
@@ -71,7 +71,7 @@ The image has a non-root runtime user and a Docker health check. Docker Compose 
 `fly.toml` in the repo root deploys the main web service to Fly using the existing `Dockerfile` — no separate Fly-specific Dockerfile needed.
 
 ```bash
-flyctl secrets set CLERK_SECRET_KEY=... CLERK_WEBHOOK_SECRET=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENROUTER_API_KEY=... ALLOWED_ORIGINS=https://your-frontend.example.com
+flyctl secrets set CLERK_SECRET_KEY=... CLERK_WEBHOOK_SECRET=... SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... INTERNAL_FUNCTIONS_SECRET=... SUPABASE_FUNCTIONS_URL=... ALLOWED_ORIGINS=https://your-frontend.example.com
 flyctl deploy
 ```
 

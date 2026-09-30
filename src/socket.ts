@@ -1,10 +1,29 @@
 import type { Server as HttpServer } from "node:http";
 import { Server as IOServer, type Socket } from "socket.io";
 import { verifyToken } from "@clerk/backend";
-import { aiChatReply } from "./lib/ai.js";
 import { supabaseAdmin } from "./lib/supabase.js";
 import { checkRateLimit } from "./lib/rate-limit.js";
 import { savePushToken, getPushTokensForUser, getPushTokensForUsers, deletePushToken } from "./pushTokens.js";
+
+async function callAiChatAssist(
+  clerkUserId: string,
+  message: string,
+  recentMessages: { sender: string; text: string }[],
+): Promise<string> {
+  const projectUrl = process.env.SUPABASE_FUNCTIONS_URL;
+  const secret = process.env.INTERNAL_FUNCTIONS_SECRET;
+  if (!projectUrl || !secret) {
+    throw new Error("AI chat is not configured (SUPABASE_FUNCTIONS_URL/INTERNAL_FUNCTIONS_SECRET missing)");
+  }
+  const res = await fetch(`${projectUrl.replace(/\/$/, "")}/ai/ai-chat-assist`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Internal-Secret": secret },
+    body: JSON.stringify({ clerkUserId, question: message, recentMessages }),
+  });
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error || `AI request failed (${res.status})`);
+  return json?.reply || "";
+}
 
 async function sendExpoPush(opts: {
   token: string;
@@ -318,8 +337,17 @@ export function attachSocketServer(httpServer: HttpServer): IOServer {
 
     socket.on("ai:chat", safe(async (data) => {
       if (!data?.message || !data?.clerkUserId) return;
+      // Verified at socket handshake (io.use above), not re-checked per
+      // message -- the original Clerk token from that handshake is
+      // short-lived and would be long expired by the time a later ai:chat
+      // event fires on a long-lived connection, so we can't just forward it.
+      // Moved to the `ai` Supabase Edge Function's /ai-chat-assist instead of
+      // calling aiChatReply in-process, authenticated via the same
+      // shared-secret trust model as the internal broadcast bridge in
+      // src/routes/internal.ts, just in the other direction.
+      if (data.clerkUserId !== socket.data.clerkUserId) return;
       try {
-        const reply = await aiChatReply(data.message, data.recentMessages || [], "free");
+        const reply = await callAiChatAssist(data.clerkUserId, data.message, data.recentMessages || []);
         socket.emit("ai:response", { reply });
       } catch (err: any) {
         socket.emit("ai:response", { reply: "", error: err?.message || "AI error" });

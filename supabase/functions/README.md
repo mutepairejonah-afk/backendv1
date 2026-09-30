@@ -41,7 +41,7 @@ smaller `upload-avatar`, `upload-moment-image`, `upload-chat-media`,
 `upload-document-message`, and all of `payments`) is a same-request,
 same-contract port — no frontend changes needed there beyond the base URL.
 
-## Why realtime broadcasts still need Render
+## Why realtime broadcasts still need Render (and vice versa for ai:chat)
 
 Edge Functions are stateless and short-lived — they don't hold Socket.IO
 connections. Only the Render process does. So `finalize-video-status` calls
@@ -51,6 +51,20 @@ with a shared secret (`INTERNAL_FUNCTIONS_SECRET`) rather than a user's Clerk
 token. If that secret isn't configured on either side, the broadcast is
 silently skipped rather than failing the whole upload — a missed realtime
 nudge is much less bad than a failed video upload.
+
+The same secret works in the other direction too: `src/socket.ts`'s realtime
+`ai:chat` event calls this `ai` function's `/ai-chat-assist` endpoint rather
+than running the AI call in-process, but a Socket.IO connection can stay open
+far longer than a Clerk session token lives, so the token from that socket's
+original handshake would often be expired by the time a later `ai:chat` event
+fires. Instead, `serve()` (in `_shared/serve.ts`) accepts a request carrying
+`X-Internal-Secret: <INTERNAL_FUNCTIONS_SECRET>` plus an explicit
+`clerkUserId` in the body as an alternative to a Clerk Bearer token, trusting
+that Render already verified the user itself (which it does, at the socket's
+connection handshake). This bypass only works with the correct secret and
+only ever grants the identity explicitly passed in the body -- it's not a
+general auth bypass, just a same-trust-level alternative to a token that
+would otherwise need refreshing mid-connection.
 
 ## Why rate limiting is DB-backed here, not in-memory
 
